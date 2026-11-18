@@ -177,6 +177,74 @@ def test_dispatch_known_path_wrong_method_is_405():
     assert body_of(response)["error"]["code"] == "method_not_allowed"
 
 
+FLOOR = "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90"
+SEAT = "0B1C2D3E-4F50-4A61-8B72-9C8D7E6F5A40"
+
+
+def show_ids(_event, **ids):
+    return respond(200, ids)
+
+
+ID_ROUTES = {
+    ("GET", "/floors"): show_ids,
+    ("GET", "/floors/{floor_id}"): show_ids,
+    ("DELETE", "/floors/{floor_id}"): show_ids,
+    ("GET", "/floors/{floor_id}/seats/{seat_id}"): show_ids,
+}
+
+
+def test_dispatch_passes_ids_in_the_path_to_the_endpoint_by_name():
+    response = dispatch(make_event("GET", f"/api/things/floors/{FLOOR}/seats/{SEAT}/"), "things", ID_ROUTES)
+    assert response["statusCode"] == 200
+    assert body_of(response) == {"floor_id": FLOOR, "seat_id": SEAT}
+
+
+def test_dispatch_routes_without_ids_get_no_extra_arguments():
+    assert body_of(dispatch(make_event("GET", "/floors"), "things", ID_ROUTES)) == {}
+
+
+def test_dispatch_picks_the_method_among_routes_sharing_a_path():
+    assert dispatch(make_event("DELETE", f"/floors/{FLOOR}"), "things", ID_ROUTES)["statusCode"] == 200
+    response = dispatch(make_event("POST", f"/floors/{FLOOR}"), "things", ID_ROUTES)
+    assert response["statusCode"] == 405
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "42",
+        "not-a-uuid",
+        FLOOR[:-1],  # one character short
+        FLOOR + "0",
+        FLOOR.replace("-", ""),
+        "------------------------------------",  # right length, no digits
+        "g" + FLOOR[1:],
+        FLOOR + "%0A",
+        FLOOR + "\n",  # what the local stack hands over for %0A
+        FLOOR[1:],  # first group one short
+        FLOOR[:8] + FLOOR[13:],  # one group missing
+        FLOOR[:8] + "-0000" + FLOOR[8:],  # one group too many
+        FLOOR[:9] + FLOOR[10:],  # a middle group one short
+        "'; DROP TABLE users; --",
+    ],
+)
+def test_dispatch_treats_anything_but_a_uuid_as_an_unknown_path(bad_id):
+    def must_not_run(_event, **_ids):  # pragma: no cover - the point is that it is not called
+        raise AssertionError("endpoint reached with a malformed id")
+
+    response = dispatch(make_event("GET", f"/floors/{bad_id}"), "things", {("GET", "/floors/{floor_id}"): must_not_run})
+    assert response["statusCode"] == 404
+    assert body_of(response)["error"]["code"] == "not_found"
+
+
+def test_dispatch_route_text_is_matched_literally():
+    routes = {("GET", "/a.b"): echo, ("GET", "/c+"): echo}
+    assert dispatch(make_event("GET", "/a.b"), "things", routes)["statusCode"] == 200
+    assert dispatch(make_event("GET", "/c+"), "things", routes)["statusCode"] == 200
+    assert dispatch(make_event("GET", "/aXb"), "things", routes)["statusCode"] == 404
+    assert dispatch(make_event("GET", "/ccc"), "things", routes)["statusCode"] == 404
+
+
 def test_dispatch_defaults_to_get_root_for_an_empty_event():
     assert dispatch(None, "things", ROUTES)["statusCode"] == 200
 

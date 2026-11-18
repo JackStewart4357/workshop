@@ -117,11 +117,26 @@ def clean_email(value):
 # ---------------------------------------------------------------------------
 
 
+_UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
+
+
+def _path_params(route_path, path):
+    """The ids in path if it is this route, else None: '/floors/{floor_id}' -> {'floor_id': '...'}.
+
+    Every id in the database is a UUID, so a {name} part only matches one. Anything else
+    is simply not this route and ends as a 404, never as a database error.
+    """
+    pattern = re.sub(r"\\\{(\w+)\\\}", rf"(?P<\1>{_UUID})", re.escape(route_path))
+    found = re.fullmatch(pattern, path)
+    return found.groupdict() if found else None
+
+
 def dispatch(event, service, routes, before=None):
     """Route a Function URL event and always return a well-formed response.
 
     service: the folder name, i.e. the '<service>' in /api/<service>/...
-    routes:  {(METHOD, "/path"): endpoint(event)}
+    routes:  {(METHOD, "/path"): endpoint(event)}. A path may hold ids, which are passed
+             on by name: {("GET", "/floors/{floor_id}"): endpoint(event, floor_id)}
     before:  optional callable run before every request (e.g. one-time setup)
     """
     event = event or {}
@@ -133,10 +148,15 @@ def dispatch(event, service, routes, before=None):
     try:
         if before:
             before()
-        endpoint = routes.get((method, path))
-        if endpoint:
-            return endpoint(event)
-        if any(route_path == path for _, route_path in routes):
+        path_exists = False
+        for (route_method, route_path), endpoint in routes.items():
+            params = _path_params(route_path, path)
+            if params is None:
+                continue
+            if route_method == method:
+                return endpoint(event, **params)
+            path_exists = True
+        if path_exists:
             raise ApiError(405, "method_not_allowed", f"{method} is not allowed on {path}")
         raise ApiError(404, "not_found", f"No route for {method} {path}")
     except ApiError as error:

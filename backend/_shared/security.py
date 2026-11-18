@@ -1,5 +1,6 @@
 """Passwords, JWTs and the permission checks every protected endpoint uses."""
 
+import functools
 import os
 import secrets
 import time
@@ -106,6 +107,7 @@ def user_from_token(token, token_type):
         raise ApiError(401, "invalid_token", "Your session is no longer valid")
     return user
 
+
 def current_user(event):
     """Authentication step for protected routes: the caller, from the Bearer token."""
     headers = {str(k).lower(): v for k, v in (event.get("headers") or {}).items()}
@@ -119,3 +121,31 @@ def require_role(user, *allowed):
     """Authorization step: the single place role permissions are enforced."""
     if user["role"] not in allowed:
         raise ApiError(403, "access_denied", "You do not have permission to perform this action")
+
+
+def protected(*roles):
+    """Decorator for endpoints that need a signed-in user, optionally limited to some roles.
+    The endpoint receives the caller as its second argument.
+
+        @protected()                    # any signed-in user
+        def list_buildings(event, user): ...
+
+        @protected("ADMIN")             # admins only
+        def delete_floor(event, user, floor_id): ...
+    """
+    # Caught when the service starts, not on the first request: a misspelt role would lock
+    # everyone out, and @protected without its brackets would never run the endpoint.
+    if not set(roles) <= set(ROLES):
+        raise ValueError(f"@protected() takes role names from {ROLES} and needs its brackets")
+
+    def decorate(endpoint):
+        @functools.wraps(endpoint)
+        def guarded(event, **path_params):
+            user = current_user(event)
+            if roles:
+                require_role(user, *roles)
+            return endpoint(event, user, **path_params)
+
+        return guarded
+
+    return decorate

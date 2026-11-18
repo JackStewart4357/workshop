@@ -5,6 +5,7 @@ import pytest
 
 import db
 from conftest import load_fresh
+from http_utils import ApiError
 
 
 def test_conninfo_local_has_no_ssl(monkeypatch):
@@ -206,3 +207,160 @@ def test_interrupted_write_is_not_committed_by_the_next_query(monkeypatch):
         )
     assert db._conn is None
     assert db.query("SELECT count(*) AS n FROM users")["n"] == 0
+
+
+# ---------------------------------------------------------------------------
+# query_all
+# ---------------------------------------------------------------------------
+
+
+def test_query_all_returns_every_row_in_order():
+    rows = db.query_all("SELECT n FROM generate_series(1, 3) AS n ORDER BY n DESC")
+    assert rows == [{"n": 3}, {"n": 2}, {"n": 1}]
+
+
+def test_query_all_binds_parameters():
+    assert db.query_all("SELECT n FROM generate_series(1, %s) AS n", (2,)) == [{"n": 1}, {"n": 2}]
+
+
+@pytest.mark.parametrize("sql", ["SELECT 1 AS one WHERE false", "SET LOCAL statement_timeout = 0"])
+def test_query_all_is_an_empty_list_when_there_is_nothing_to_return(sql):
+    assert db.query_all(sql) == []
+
+
+# ---------------------------------------------------------------------------
+# transaction
+# ---------------------------------------------------------------------------
+
+ADD_USER = "INSERT INTO users (email, full_name, password_hash, role) VALUES (%s, 'T', 'hash', 'EMPLOYEE')"
+
+
+def user_count():
+    return db.query("SELECT count(*) AS n FROM users")["n"]
+
+
+def test_transaction_saves_every_statement_together():
+    with db.transaction():
+        db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+        with psycopg.connect(db.pg_conninfo()) as other:  # not visible to anyone else yet
+            assert other.execute("SELECT count(*) FROM users").fetchone()[0] == 0
+        assert db.query(ADD_USER + " RETURNING email", ("two@acme.inc",)) == {"email": "two@acme.inc"}
+    with psycopg.connect(db.pg_conninfo()) as other:
+        assert other.execute("SELECT count(*) FROM users").fetchone()[0] == 2
+
+
+def test_transaction_saves_nothing_when_a_statement_fails():
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+    assert user_count() == 0
+
+
+def test_transaction_saves_nothing_when_the_endpoint_raises():
+    with pytest.raises(ApiError):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            raise ApiError(409, "conflict", "Changed by someone else")
+    assert user_count() == 0
+
+
+def test_statements_after_a_transaction_commit_on_their_own_again():
+    with db.transaction():
+        db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+    with pytest.raises(RuntimeError):
+        with db.transaction():
+            raise RuntimeError("endpoint bug")
+    db.query(ADD_USER, ("two@acme.inc",), fetch=False)
+    with psycopg.connect(db.pg_conninfo()) as other:
+        assert other.execute("SELECT count(*) FROM users").fetchone()[0] == 2
+
+
+def test_a_statement_that_failed_inside_a_transaction_cannot_be_ignored():
+    """Catching the error and carrying on must not save half of the block."""
+    with pytest.raises(psycopg.errors.InFailedSqlTransaction):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            db.query(ADD_USER, ("two@acme.inc",), fetch=False)
+    assert user_count() == 0
+
+
+def test_a_failed_last_statement_that_was_caught_is_still_reported():
+    """Otherwise the block would end normally and the endpoint would answer "saved"."""
+    with pytest.raises(RuntimeError, match="nothing was saved"):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+    assert user_count() == 0
+
+
+def test_connection_lost_inside_a_transaction_and_caught_does_not_save_the_later_half():
+    with pytest.raises(psycopg.OperationalError):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            with psycopg.connect(db.pg_conninfo(), autocommit=True) as other:
+                other.execute("SELECT pg_terminate_backend(%s)", (db._conn.info.backend_pid,))
+            with pytest.raises(psycopg.OperationalError):
+                db.query(ADD_USER, ("two@acme.inc",), fetch=False)
+            db.query(ADD_USER, ("three@acme.inc",), fetch=False)
+    assert db._conn.info.transaction_status == psycopg.pq.TransactionStatus.IDLE
+    assert user_count() == 0
+
+
+def test_transactions_cannot_be_nested():
+    with db.transaction():
+        db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+        with pytest.raises(RuntimeError, match="nested"):
+            with db.transaction():
+                pass  # pragma: no cover - never entered
+        db.query(ADD_USER, ("two@acme.inc",), fetch=False)
+        with psycopg.connect(db.pg_conninfo()) as other:  # still one unsaved unit
+            assert other.execute("SELECT count(*) FROM users").fetchone()[0] == 0
+        assert len(db.query_all("SELECT email FROM users")) == 2  # lists work inside a block too
+    assert user_count() == 2  # the outer block was not disturbed
+
+
+def test_transaction_starts_on_a_live_connection_after_the_server_dropped_it():
+    old_pid = kill_cached_connection()
+    with db.transaction():
+        assert db.query("SELECT pg_backend_pid() AS pid")["pid"] != old_pid
+        db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+    assert user_count() == 1
+
+
+def test_connection_lost_inside_a_transaction_is_not_retried():
+    """Retrying on a new connection would save the later statements without the earlier ones."""
+    with pytest.raises(psycopg.OperationalError):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            with psycopg.connect(db.pg_conninfo(), autocommit=True) as other:
+                other.execute("SELECT pg_terminate_backend(%s)", (db._conn.info.backend_pid,))
+            db.query(ADD_USER, ("two@acme.inc",), fetch=False)
+    assert db._conn is None
+    assert user_count() == 0
+
+
+def test_interrupted_transaction_is_not_committed_by_the_next_query():
+    with pytest.raises(KeyboardInterrupt):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            raise KeyboardInterrupt
+    assert db._conn is None
+    assert user_count() == 0
+
+
+def test_failed_commit_is_reported_and_saves_nothing(monkeypatch):
+    connection = db._connection()
+
+    def refuse():
+        raise psycopg.OperationalError("connection lost at commit")
+
+    with pytest.raises(psycopg.OperationalError, match="at commit"):
+        with db.transaction():
+            db.query(ADD_USER, ("one@acme.inc",), fetch=False)
+            monkeypatch.setattr(connection, "commit", refuse, raising=False)
+    monkeypatch.undo()
+    assert user_count() == 0

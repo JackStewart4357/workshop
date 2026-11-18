@@ -128,8 +128,8 @@ def database():
 
 @pytest.fixture(autouse=True)
 def clean_state(database):
-    """Every test starts with empty user tables and no cached signing key."""
-    db.query("TRUNCATE users, app_secrets CASCADE", fetch=False)
+    """Every test starts with empty tables (categories keep their fixed rows) and no cached signing key."""
+    db.query("TRUNCATE users, app_secrets, buildings CASCADE", fetch=False)
     security._jwt_secret = ""
     yield
 

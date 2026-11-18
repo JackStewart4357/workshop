@@ -1,5 +1,6 @@
 """Tests for password hashing, tokens and the permission checks."""
 
+import json
 import time
 from contextlib import contextmanager
 
@@ -9,7 +10,7 @@ import pytest
 import db
 import security
 from conftest import load_fresh, make_event
-from http_utils import ApiError
+from http_utils import ApiError, dispatch, respond
 
 
 @pytest.fixture
@@ -254,6 +255,71 @@ def test_require_role_allows_listed_roles():
 def test_require_role_denies_everyone_else(role, allowed):
     with raises(403, "access_denied"):
         security.require_role({"role": role}, *allowed)
+
+
+def test_protected_endpoint_receives_the_caller_and_the_path_ids(user):
+    @security.protected()
+    def endpoint(event, caller, floor_id):
+        """Shown in the API table."""
+        return caller["email"], floor_id, event["rawPath"]
+
+    token = security.issue_token(user, "access", 60)
+    assert endpoint(make_event(path="/floors/7", token=token), floor_id="7") == ("ada@acme.inc", "7", "/floors/7")
+    assert endpoint.__name__ == "endpoint" and endpoint.__doc__ == "Shown in the API table."
+
+
+def test_protected_endpoint_without_roles_is_open_to_every_signed_in_role(user):
+    endpoint = security.protected()(lambda _event, caller: caller["role"])
+    for role in security.ROLES:
+        db.query("UPDATE users SET role = %s WHERE id = %s", (role, user["id"]), fetch=False)
+        assert endpoint(make_event(token=security.issue_token(user, "access", 60))) == role
+
+
+def test_protected_endpoint_is_never_run_without_a_valid_token(user):
+    calls = []
+    endpoint = security.protected("ENGINEER")(lambda _event, _caller: calls.append("ran"))
+    with raises(401, "unauthorized"):
+        endpoint(make_event())
+    with raises(401, "invalid_token"):
+        endpoint(make_event(token=security.issue_token(user, "refresh", 60)))
+    assert calls == []
+
+
+def test_protected_endpoint_is_never_run_for_a_role_that_is_not_listed(user):
+    calls = []
+    endpoint = security.protected("ADMIN", "EMPLOYEE")(lambda _event, _caller: calls.append("ran"))
+    token = security.issue_token(user, "access", 60)
+    with raises(403, "access_denied"):
+        endpoint(make_event(token=token))
+    assert calls == []
+    # The role is read from the database on every request, not trusted from the token
+    for role in ("ADMIN", "EMPLOYEE"):  # every listed role gets in, not only the first
+        db.query("UPDATE users SET role = %s WHERE id = %s", (role, user["id"]), fetch=False)
+        endpoint(make_event(token=token))
+    assert calls == ["ran", "ran"]
+
+
+def test_protected_refuses_a_misspelt_role_or_missing_brackets_at_import_time():
+    with pytest.raises(ValueError, match="role names"):
+        security.protected("ADMINS")
+    with pytest.raises(ValueError, match="brackets"):
+
+        @security.protected
+        def endpoint(_event, _caller):  # pragma: no cover - never becomes callable
+            pass
+
+
+def test_protected_endpoints_work_through_dispatch(user):
+    @security.protected("ENGINEER")
+    def show(_event, caller, floor_id):
+        return respond(200, {"caller": caller["email"], "floor_id": floor_id})
+
+    routes = {("GET", "/floors/{floor_id}"): show}
+    floor = "3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90"
+    token = security.issue_token(user, "access", 60)
+    ok = dispatch(make_event("GET", f"/floors/{floor}", token=token), "things", routes)
+    assert (ok["statusCode"], json.loads(ok["body"])) == (200, {"caller": "ada@acme.inc", "floor_id": floor})
+    assert dispatch(make_event("GET", f"/floors/{floor}"), "things", routes)["statusCode"] == 401
 
 
 def test_roles_match_the_database_constraint():

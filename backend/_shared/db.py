@@ -1,6 +1,7 @@
 """PostgreSQL access: one connection reused across warm Lambda invocations."""
 
 import os
+from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
@@ -8,6 +9,7 @@ from psycopg.rows import dict_row
 IS_LOCAL = os.getenv("IS_LOCAL", "false") == "true"
 
 _conn = None
+_in_transaction = False
 
 
 def pg_conninfo():
@@ -50,14 +52,32 @@ def _discard():
 def _execute(sql, params, fetch):
     with _connection().cursor() as cur:
         cur.execute(sql, params)
-        return cur.fetchone() if fetch and cur.description else None
+        if not (fetch and cur.description):
+            return None
+        return cur.fetchall() if fetch == "all" else cur.fetchone()
+
+
+def _undo(error):
+    """Roll back after a failure. Never reuse a connection that is lost, that was interrupted
+    mid-statement, or that cannot be rolled back: a half-finished transaction must not leak
+    into the next call."""
+    if _connection_lost() or not isinstance(error, Exception):
+        _discard()
+    else:
+        try:
+            _conn.rollback()
+        except psycopg.Error:
+            _discard()
 
 
 def query(sql, params=None, fetch=True):
     """Run one statement in its own transaction and return the first row (or None).
 
     Rows come back as dicts. Pass fetch=False for statements whose result is not needed.
+    Inside a transaction() block the statement joins that block instead.
     """
+    if _in_transaction:
+        return _execute(sql, params, fetch)  # transaction() saves or undoes the whole block
     reused = _conn is not None and not _conn.closed
     try:
         try:
@@ -73,13 +93,39 @@ def query(sql, params=None, fetch=True):
         _conn.commit()
         return row
     except BaseException as error:
-        # Never reuse a connection that is lost, that was interrupted mid-statement, or that
-        # cannot be rolled back: a half-finished transaction must not leak into the next call.
-        if _connection_lost() or not isinstance(error, Exception):
-            _discard()
-        else:
-            try:
-                _conn.rollback()
-            except psycopg.Error:
-                _discard()
+        _undo(error)
         raise
+
+
+def query_all(sql, params=None):
+    """Like query(), but returns every row as a list (empty when nothing matches)."""
+    return query(sql, params, fetch="all") or []
+
+
+@contextmanager
+def transaction():
+    """Make every query() in the block one unit: all of them are saved, or none if one fails.
+
+        with transaction():
+            query("UPDATE incidents SET status = ...")
+            query("INSERT INTO incident_status_history ...")
+    """
+    global _in_transaction
+    if _in_transaction:
+        raise RuntimeError("transaction() blocks cannot be nested")
+    # Replace a dead cached connection now. Once the block has started a statement cannot be
+    # retried on a new connection, because the earlier ones would be missing from it.
+    query("SELECT 1", fetch=False)
+    connection = _conn
+    _in_transaction = True
+    try:
+        yield
+        # A statement error the block caught has already undone it: COMMIT would only roll back.
+        if connection.info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+            raise RuntimeError("a statement failed inside transaction(): nothing was saved")
+        connection.commit()  # the one the block started on, never a replacement
+    except BaseException as error:
+        _undo(error)
+        raise
+    finally:
+        _in_transaction = False
