@@ -72,9 +72,14 @@ def query(sql, params=None, fetch=True):
             row = _execute(sql, params, fetch)
         _conn.commit()
         return row
-    except Exception:
-        if _connection_lost():
-            _discard()  # reconnect on the next call
+    except BaseException as error:
+        # Never reuse a connection that is lost, that was interrupted mid-statement, or that
+        # cannot be rolled back: a half-finished transaction must not leak into the next call.
+        if _connection_lost() or not isinstance(error, Exception):
+            _discard()
         else:
-            _conn.rollback()
+            try:
+                _conn.rollback()
+            except psycopg.Error:
+                _discard()
         raise

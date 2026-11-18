@@ -58,7 +58,7 @@ def json_body(event):
         if event.get("isBase64Encoded"):
             raw = base64.b64decode(raw).decode("utf-8")
         data = json.loads(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, RecursionError):
         raise ApiError(400, "validation_error", "Request body must be valid JSON") from None
     if not isinstance(data, dict):
         raise ApiError(400, "validation_error", "Request body must be a JSON object")
@@ -82,12 +82,20 @@ def validate(data, rules):
     return cleaned
 
 
+def is_storable_text(value):
+    """False for strings PostgreSQL or UTF-8 cannot hold: NUL bytes and lone surrogates,
+    both of which valid JSON can carry."""
+    return "\x00" not in value and not any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+
+
 def clean_text(label, max_length):
     """Cleaner factory: a required, trimmed string of at most max_length characters."""
 
     def clean(value):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{label} is required")
+        if not is_storable_text(value):
+            raise ValueError(f"{label} contains characters that are not valid text")
         if len(value.strip()) > max_length:
             raise ValueError(f"{label} must be at most {max_length} characters")
         return value.strip()

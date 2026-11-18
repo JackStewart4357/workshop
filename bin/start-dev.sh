@@ -327,20 +327,40 @@ else
     echo -e "  Detected Mac/Windows - using host: host.docker.internal"
 fi
 
+# Copy shared backend modules (backend/_shared) into each Python service
+"$SCRIPT_DIR/sync-shared.sh"
+
 # Install pip requirements into each Python service directory for hot-reload
 # Skip if requirements.txt hasn't changed since last install (avoids slow PyPI lookups)
+# Packages must be built for the Lambda runtime (python3.13, see infra/locals.tf), not for
+# whichever Python the bare `pip` command happens to belong to.
+if command -v python3.13 > /dev/null 2>&1; then
+    LAMBDA_PIP="python3.13 -m pip"
+else
+    LAMBDA_PIP="pip"
+    echo -e "  ⚠ python3.13 not found - using '$(pip --version 2>/dev/null | cut -d' ' -f1-2)', packages may not load in the Lambda runtime"
+fi
 shopt -s nullglob
 for req in "$PROJECT_ROOT"/backend/*/requirements.txt; do
     svc_dir="$(dirname "$req")"
-    REQS_HASH=$(md5sum "$req" 2>/dev/null | cut -d' ' -f1)
+    case "$(basename "$svc_dir")" in _*|.*) continue ;; esac
+    # Hash covers the installer too, so switching Python versions forces a reinstall
+    REQS_HASH=$( (echo "$LAMBDA_PIP"; cat "$req") | md5sum 2>/dev/null | cut -d' ' -f1)
     HASH_FILE="$svc_dir/.pip_installed"
-    if [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$REQS_HASH" ]; then
+    # An empty hash (no md5sum on this host) must never count as "up to date"
+    if [ -n "$REQS_HASH" ] && [ "$(cat "$HASH_FILE" 2>/dev/null)" = "$REQS_HASH" ]; then
         echo -e "  pip requirements for $(basename "$svc_dir") already up to date, skipping..."
         continue
     fi
     echo -e "  Installing pip requirements for $(basename "$svc_dir")..."
-    pip install --quiet --target="$svc_dir" -r "$req" 2>/dev/null || true
-    echo "$REQS_HASH" > "$HASH_FILE"
+    if $LAMBDA_PIP install --quiet --disable-pip-version-check --upgrade --target="$svc_dir" -r "$req" > /tmp/pip-install.log 2>&1; then
+        echo "$REQS_HASH" > "$HASH_FILE"
+    else
+        # Do not record the hash: the next run must retry instead of silently skipping
+        echo -e "  ✗ pip install failed for $(basename "$svc_dir") - its Lambda will not start:"
+        tail -5 /tmp/pip-install.log | sed 's/^/    /'
+        rm -f "$HASH_FILE"
+    fi
 done
 
 # Install npm dependencies into each Node.js service directory for hot-reload

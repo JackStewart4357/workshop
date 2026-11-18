@@ -72,6 +72,13 @@ def test_verify_handles_non_ascii_and_over_long_passwords():
     assert security.verify_password("x" * 500, hashed) is False
 
 
+def test_verify_never_raises_for_text_json_can_carry():
+    hashed = security.hash_password("correct horse 1")
+    for password in ["\ud800password1", "pass\x00word1", "🔐" * 300]:
+        assert security.verify_password(password, hashed) is False
+        assert security.verify_password(password, None) is False
+
+
 def test_verify_rejects_extra_characters_after_a_maximum_length_password():
     """bcrypt only reads the first 72 bytes; anything longer must still be a mismatch."""
     longest = "a1" + "x" * 70
@@ -140,7 +147,7 @@ def test_expired_token_is_rejected_with_its_own_code(user):
         security.user_from_token(security.issue_token(user, "access", -1), "access")
 
 
-@pytest.mark.parametrize("token", ["", "garbage", "a.b.c", "eyJhbGciOiJub25lIn0.e30."])
+@pytest.mark.parametrize("token", ["", "garbage", "a.b.c", "eyJhbGciOiJub25lIn0.e30.", "\ud800"])
 def test_malformed_tokens_are_rejected(token):
     with raises(401, "invalid_token"):
         security.user_from_token(token, "access")

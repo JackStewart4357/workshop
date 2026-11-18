@@ -68,6 +68,12 @@ def test_json_body_rejects_bad_input(raw, message):
     assert (error.value.status, error.value.code, error.value.message) == (400, "validation_error", message)
 
 
+def test_json_body_rejects_absurdly_nested_json():
+    with pytest.raises(ApiError) as error:
+        json_body({"body": "[" * 200_000})
+    assert error.value.status == 400
+
+
 def test_json_body_rejects_invalid_base64_payload():
     with pytest.raises(ApiError) as error:
         json_body({"body": "%%%", "isBase64Encoded": True})
@@ -96,6 +102,13 @@ def test_validate_reports_every_failing_field_at_once():
 @pytest.mark.parametrize("value", [None, "", "   ", 42, ["a"]])
 def test_clean_text_requires_a_non_blank_string(value):
     with pytest.raises(ValueError, match="Name is required"):
+        clean_text("Name", 10)(value)
+
+
+@pytest.mark.parametrize("value", ["A\x00B", "A\ud800B"])
+def test_clean_text_rejects_characters_the_database_cannot_store(value):
+    """Valid JSON can carry NUL bytes and lone surrogates; they must be a 400, not a 500."""
+    with pytest.raises(ValueError, match="Name contains characters that are not valid text"):
         clean_text("Name", 10)(value)
 
 

@@ -36,6 +36,7 @@ logger.setLevel(logging.INFO)
 
 ALLOWED_EMAIL_DOMAIN = "acme.inc"  # also enforced by a CHECK on users.email
 PASSWORD_MIN_LENGTH = 8
+EMAIL_TAKEN = "An account with this email already exists"
 # First facility admin, created only when no admin exists yet.
 SEED_ADMIN_EMAIL = os.getenv("SEED_ADMIN_EMAIL", f"admin@{ALLOWED_EMAIL_DOMAIN}")
 # The built-in password is for local development only. A deployed service must be given
@@ -62,13 +63,24 @@ def bootstrap():
     elif not SEED_ADMIN_PASSWORD:
         logger.error("No admin account exists and SEED_ADMIN_PASSWORD is not set: no admin was created")
     else:
-        query(
-            "INSERT INTO users (email, full_name, password_hash, role) "
-            "VALUES (%s, 'Facility Admin', %s, 'ADMIN') ON CONFLICT (email) DO NOTHING",
-            (SEED_ADMIN_EMAIL.lower(), hash_password(SEED_ADMIN_PASSWORD)),
-            fetch=False,
-        )
-        logger.info("Seeded initial admin account %s", SEED_ADMIN_EMAIL)
+        # Hold the seed settings to the same rules as registration: an address the schema
+        # rejects, or a password bcrypt would truncate, must not take the service down or
+        # create an admin nobody can log in as.
+        try:
+            email = clean_company_email(SEED_ADMIN_EMAIL)
+            password = clean_new_password(SEED_ADMIN_PASSWORD)
+        except ValueError as error:
+            logger.error("Seed admin settings are not usable (%s): no admin was created", error)
+        else:
+            seeded = query(
+                "INSERT INTO users (email, full_name, password_hash, role) "
+                "VALUES (%s, 'Facility Admin', %s, 'ADMIN') ON CONFLICT (email) DO NOTHING RETURNING id",
+                (email, hash_password(password)),
+            )
+            if seeded:
+                logger.info("Seeded initial admin account %s", email)
+            else:
+                logger.error("%s is already registered and is not an admin: no admin was created", email)
     _ready = True
 
 
@@ -89,6 +101,8 @@ def clean_new_password(value):
         raise ValueError("Password is required")
     if len(value) < PASSWORD_MIN_LENGTH:
         raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+    if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        raise ValueError("Password contains characters that are not valid text")
     if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
         raise ValueError(f"Password must be at most {PASSWORD_MAX_BYTES} bytes")
     if not (re.search(r"[A-Za-z]", value) and re.search(r"\d", value)):
@@ -135,14 +149,16 @@ def register(event):
         json_body(event),
         {"email": clean_company_email, "full_name": clean_text("Full name", 100), "password": clean_new_password},
     )
+    if fields["email"] == SEED_ADMIN_EMAIL.strip().lower():
+        # Reserved for the first admin, whether or not that account has been created yet.
+        raise ApiError(409, "conflict", EMAIL_TAKEN, {"email": EMAIL_TAKEN})
     user = query(
         "INSERT INTO users (email, full_name, password_hash, role) VALUES (%s, %s, %s, 'EMPLOYEE') "
         "ON CONFLICT (email) DO NOTHING RETURNING *",
         (fields["email"], fields["full_name"], hash_password(fields["password"])),
     )
     if not user:
-        message = "An account with this email already exists"
-        raise ApiError(409, "conflict", message, {"email": message})
+        raise ApiError(409, "conflict", EMAIL_TAKEN, {"email": EMAIL_TAKEN})
     return respond(201, session(user))
 
 

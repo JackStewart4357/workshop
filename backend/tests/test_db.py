@@ -179,3 +179,30 @@ def test_discarding_a_connection_tolerates_a_failing_close(monkeypatch):
     db._discard()
     assert db._conn is None
     assert db.query("SELECT 1 AS one") == {"one": 1}
+
+
+def test_connection_that_cannot_be_rolled_back_is_never_reused():
+    """A statement that leaves the connection mid-command must not poison later calls,
+    and the caller must see the real error."""
+    with pytest.raises(psycopg.ProgrammingError, match="COPY"):
+        db.query("COPY users TO STDOUT", fetch=False)
+    assert db.query("SELECT 1 AS one") == {"one": 1}
+
+
+def test_interrupted_write_is_not_committed_by_the_next_query(monkeypatch):
+    """An interrupt between execute and commit must discard the transaction, not leave
+    it open for an unrelated later statement to commit."""
+    connection = db._connection()
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(connection, "commit", interrupted, raising=False)
+    with pytest.raises(KeyboardInterrupt):
+        db.query(
+            "INSERT INTO users (email, full_name, password_hash, role) VALUES (%s, %s, %s, %s)",
+            ("ghost@acme.inc", "Ghost", "hash", "EMPLOYEE"),
+            fetch=False,
+        )
+    assert db._conn is None
+    assert db.query("SELECT count(*) AS n FROM users")["n"] == 0

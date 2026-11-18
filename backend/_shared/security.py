@@ -35,7 +35,7 @@ def hash_password(password):
 
 def verify_password(password, password_hash):
     """True only for the right password; a missing hash still costs one comparison."""
-    candidate = password.encode("utf-8")
+    candidate = password.encode("utf-8", "surrogatepass")  # never raises, whatever JSON sent
     expected = password_hash.encode("ascii") if password_hash else _DUMMY_HASH
     matches = bcrypt.checkpw(candidate[:PASSWORD_MAX_BYTES], expected)
     # bcrypt ignores everything past 72 bytes, so a longer candidate must not be accepted
@@ -98,7 +98,7 @@ def user_from_token(token, token_type):
         )
     except jwt.ExpiredSignatureError:
         raise ApiError(401, "token_expired", "Your session has expired") from None
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, UnicodeError):
         raise ApiError(401, "invalid_token", "Invalid authentication token") from None
     user = find_user_by_id(claims["sub"]) if claims["type"] == token_type else None
     # token_version changes on logout, which revokes everything issued before it.

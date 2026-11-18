@@ -103,6 +103,8 @@ def test_register_cannot_choose_its_own_role(auth, extra):
         ("password", "lettersonly", "Password must contain at least one letter and one number"),
         ("password", "1234567890", "Password must contain at least one letter and one number"),
         ("password", "a1" + "x" * 71, "Password must be at most 72 bytes"),
+        ("password", "\ud800password1", "Password contains characters that are not valid text"),
+        ("full_name", "A\x00lice", "Full name contains characters that are not valid text"),
     ],
 )
 def test_register_validation(auth, field, value, message):
@@ -176,6 +178,16 @@ def test_login_rejects_an_overlong_password(auth):
     status, body = login(auth, password="x" * 1025)
     assert status == 400
     assert body["error"]["details"] == {"password": "Password must be at most 1024 characters"}
+
+
+@pytest.mark.parametrize("email", [ALICE["email"], "nobody@acme.inc"])
+def test_login_with_unencodable_text_is_a_normal_failure(auth, alice, email):
+    """A lone surrogate is valid JSON; it must be wrong credentials, never a 500."""
+    assert login(auth, email=email, password="\ud800password1")[0] == 401
+
+
+def test_refresh_with_unencodable_text_is_rejected_cleanly(auth):
+    assert invoke(auth, "POST", "/refresh", body={"refresh_token": "\ud800"})[0] == 400
 
 
 def test_login_failure_does_not_reveal_whether_the_email_exists(auth, alice):
@@ -338,6 +350,46 @@ def test_configured_seed_password_is_used_when_deployed(auth_service, monkeypatc
     status, body = login(deployed, email=deployed.SEED_ADMIN_EMAIL, password="from-the-environment-1")
     assert (status, body["user"]["role"]) == (200, "ADMIN")
     assert login(deployed, email=deployed.SEED_ADMIN_EMAIL, password="Admin#12345")[0] == 401
+
+
+@pytest.mark.parametrize(
+    "setting, value, reason",
+    [
+        ("SEED_ADMIN_PASSWORD", "Correct-Horse-Battery-Staple-" * 3 + "2026", "at most 72 bytes"),
+        ("SEED_ADMIN_PASSWORD", "weak", "at least 8 characters"),
+        ("SEED_ADMIN_EMAIL", "ops@example.com", "Only @acme.inc email addresses"),
+    ],
+)
+def test_unusable_seed_settings_create_no_admin_and_keep_the_service_up(auth, monkeypatch, caplog, setting, value, reason):
+    """Bad configuration must be reported once, not crash every request or create an
+    admin whose password nobody can type."""
+    monkeypatch.setattr(auth, setting, value)
+    hashes = []
+    monkeypatch.setattr(auth, "hash_password", lambda password: hashes.append(password) or "unused")
+    assert [invoke(auth, "GET", "/")[0] for _ in range(3)] == [200, 200, 200]
+    assert db.query("SELECT count(*) AS n FROM users")["n"] == 0
+    assert hashes == []
+    assert caplog.text.count("Seed admin settings are not usable") == 1 and reason in caplog.text
+
+
+def test_seed_admin_address_cannot_be_self_registered(auth, monkeypatch):
+    """Otherwise anyone could take the address before the admin exists and block its creation."""
+    monkeypatch.setattr(auth, "SEED_ADMIN_PASSWORD", "")
+    status, body = register(auth, email=auth.SEED_ADMIN_EMAIL.upper())
+    assert (status, body["error"]["code"]) == (409, "conflict")
+    assert db.query("SELECT count(*) AS n FROM users")["n"] == 0
+
+
+def test_seeding_reports_an_address_already_held_by_a_non_admin(auth, caplog):
+    db.query(
+        "INSERT INTO users (email, full_name, password_hash, role) VALUES (%s, 'Mallory', 'hash', 'EMPLOYEE')",
+        (auth.SEED_ADMIN_EMAIL,),
+        fetch=False,
+    )
+    assert invoke(auth, "GET", "/")[0] == 200
+    assert db.query("SELECT count(*) AS n FROM users WHERE role = 'ADMIN'")["n"] == 0
+    assert "already registered and is not an admin" in caplog.text
+    assert "Seeded initial admin" not in caplog.text
 
 
 def test_admin_is_not_seeded_when_one_already_exists(auth):
