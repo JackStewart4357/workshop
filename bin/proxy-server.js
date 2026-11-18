@@ -38,7 +38,9 @@ const server = http.createServer((req, res) => {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  // Name the headers the browser asked for: by the CORS rules '*' does not cover Authorization,
+  // so a strict browser would block every signed-in request.
+  res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
   res.setHeader('Access-Control-Max-Age', '86400');
 
   // Handle preflight
