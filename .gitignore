@@ -256,3 +256,6 @@ tfplan
 
 # Snyk Security Extension - AI Rules (auto-generated)
 .github/instructions/snyk_rules.instructions.md
+
+# Local dev script output (may contain tokens)
+start.txt
