@@ -353,7 +353,24 @@ for req in "$PROJECT_ROOT"/backend/*/requirements.txt; do
         continue
     fi
     echo -e "  Installing pip requirements for $(basename "$svc_dir")..."
-    if $LAMBDA_PIP install --quiet --disable-pip-version-check --upgrade --target="$svc_dir" -r "$req" > /tmp/pip-install.log 2>&1; then
+    # Install into an empty staging folder, then move the packages in. Installing straight
+    # into the service folder could replace the service's own files if a dependency ships
+    # a top-level file or folder with the same name.
+    stage="$(mktemp -d)"
+    if $LAMBDA_PIP install --quiet --disable-pip-version-check --target="$stage" -r "$req" > /tmp/pip-install.log 2>&1; then
+        clash=""
+        for item in "$stage"/*; do
+            name="$(basename "$item")"
+            if [ "$name" = function.py ] || [ "$name" = requirements.txt ] \
+                || [ -e "$PROJECT_ROOT/backend/_shared/$name" ] \
+                || grep -qxF "!/$name" "$svc_dir/.gitignore" 2> /dev/null; then
+                clash="$clash $name"
+                continue
+            fi
+            rm -rf "${svc_dir:?}/$name"
+            mv "$item" "$svc_dir/"
+        done
+        [ -z "$clash" ] || echo -e "  ⚠ $(basename "$svc_dir"): a dependency ships files named like the service's own, not installed:$clash"
         echo "$REQS_HASH" > "$HASH_FILE"
     else
         # Do not record the hash: the next run must retry instead of silently skipping
@@ -361,6 +378,7 @@ for req in "$PROJECT_ROOT"/backend/*/requirements.txt; do
         tail -5 /tmp/pip-install.log | sed 's/^/    /'
         rm -f "$HASH_FILE"
     fi
+    rm -rf "$stage"
 done
 
 # Install npm dependencies into each Node.js service directory for hot-reload

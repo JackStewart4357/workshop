@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import uuid
@@ -23,7 +24,14 @@ TEST_SCHEMA = f"test_{uuid.uuid4().hex[:12]}"
 
 # The tests import backend/_shared directly, but a running or deployed Lambda imports the
 # copy inside its own folder. Refresh the copies first so the two can never drift apart.
-subprocess.run([str(BACKEND_DIR.parent / "bin" / "sync-shared.sh")], check=True, stdout=subprocess.DEVNULL)
+_sync = subprocess.run([str(BACKEND_DIR.parent / "bin" / "sync-shared.sh")], capture_output=True, text=True)
+if _sync.returncode != 0:
+    pytest.exit(f"bin/sync-shared.sh failed:\n{_sync.stdout}{_sync.stderr}", returncode=2)
+
+# SIGTERM/SIGHUP (CI timeout, closed terminal, IDE stop button) would otherwise kill the
+# process before the session fixture can drop the throwaway schema.
+for _signal in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_signal, signal.default_int_handler)
 
 # The shared modules read their settings at import time, so set these first.
 os.environ["IS_LOCAL"] = "true"
@@ -45,6 +53,11 @@ def load_service(name):
     module_name = f"{name}_function"
     if module_name in sys.modules:
         return sys.modules[module_name]
+    # A Lambda has its own folder on sys.path. Appended (not prepended) so the shared
+    # modules still come from backend/_shared and third-party packages from the venv.
+    service_dir = str(BACKEND_DIR / name)
+    if service_dir not in sys.path:
+        sys.path.append(service_dir)
     spec = importlib.util.spec_from_file_location(module_name, BACKEND_DIR / name / "function.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module

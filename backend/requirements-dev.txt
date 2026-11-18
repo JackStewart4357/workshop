@@ -1,5 +1,5 @@
 # Test tooling for the backend. Not packaged into any Lambda.
-# Run the suite with ./bin/test-backend.sh (it creates backend/.venv from this file).
--r auth/requirements.txt
+# Run the suite with ./bin/test-backend.sh: it creates backend/.venv from this file plus
+# every service's requirements.txt.
 pytest==8.3.4
 pytest-cov==6.0.0

@@ -24,11 +24,26 @@ SHARED_DIR="$BACKEND_DIR/_shared"
 shopt -s nullglob
 shared_files=("$SHARED_DIR"/*.py)
 if [ ${#shared_files[@]} -eq 0 ]; then
-    echo "ERROR: no shared modules found in $SHARED_DIR"
+    echo "ERROR: no shared modules found in $SHARED_DIR" >&2
     exit 1
 fi
 
 HEADER_PREFIX="# AUTO-COPIED from backend/_shared/"
+
+# True when file $1 is this script's copy of the shared module named $2
+is_copy_of() {
+    [ "$(head -n 1 "$1" 2> /dev/null)" = "$HEADER_PREFIX$2 by bin/sync-shared.sh." ]
+}
+
+# The copy of shared module $1 (path) named $2, on stdout
+render() {
+    echo "$HEADER_PREFIX$2 by bin/sync-shared.sh."
+    echo "# Do not edit this copy: edit the original and run ./bin/sync-shared.sh"
+    cat "$1"
+}
+
+tmp=""
+trap '[ -z "$tmp" ] || rm -f "$tmp"' EXIT
 
 for req in "$BACKEND_DIR"/*/requirements.txt; do
     svc_dir="$(dirname "$req")"
@@ -39,17 +54,26 @@ for req in "$BACKEND_DIR"/*/requirements.txt; do
     # Everything this script and start-dev.sh generate in a service folder must stay out
     # of git. A new service gets the same allowlist backend/auth uses.
     if [ ! -e "$svc_dir/.gitignore" ]; then
+        # Keep whatever the service already owns visible to git: an allowlist that
+        # silently hid an existing helper module would drop it from the next commit.
+        own=()
+        for entry in "$svc_dir"/*; do
+            entry_name="$(basename "$entry")"
+            case "$entry_name" in requirements.txt|function.py|__pycache__|*.dist-info) continue ;; esac
+            is_copy_of "$entry" "$entry_name" && continue
+            own+=("!/$entry_name")
+        done
         printf '%s\n' \
             "# Only this service's own source is tracked. Everything else in this folder is generated" \
             "# (pip packages from start-dev.sh, shared modules copied by bin/sync-shared.sh)." \
             "# Add a '!/<file>' line for every other source file this service owns." \
-            '/*' '!/.gitignore' '!/requirements.txt' '!/function.py' > "$svc_dir/.gitignore"
+            '/*' '!/.gitignore' '!/requirements.txt' '!/function.py' "${own[@]}" > "$svc_dir/.gitignore"
         echo "  Created backend/$svc_name/.gitignore"
     fi
 
     # Remove copies whose original was deleted or renamed in backend/_shared
     for old in "$svc_dir"/*.py; do
-        if [ ! -e "$SHARED_DIR/$(basename "$old")" ] && head -n 1 "$old" | grep -q "^$HEADER_PREFIX"; then
+        if [ ! -e "$SHARED_DIR/$(basename "$old")" ] && is_copy_of "$old" "$(basename "$old")"; then
             rm -f "$old"
             echo "  Removed stale copy backend/$svc_name/$(basename "$old")"
         fi
@@ -59,23 +83,23 @@ for req in "$BACKEND_DIR"/*/requirements.txt; do
         name="$(basename "$src")"
         dest="$svc_dir/$name"
         # Only ever overwrite a file this script wrote: never a service's own module
-        if [ -e "$dest" ] && ! head -n 1 "$dest" | grep -q "^$HEADER_PREFIX"; then
-            echo "ERROR: backend/$svc_name/$name exists and is not a copy made by this script."
-            echo "       It has the same name as backend/_shared/$name: rename one of the two files."
-            exit 1
+        if [ -e "$dest" ] || [ -L "$dest" ]; then
+            if ! is_copy_of "$dest" "$name"; then
+                echo "ERROR: backend/$svc_name/$name exists and is not a copy made by this script." >&2
+                echo "       It has the same name as backend/_shared/$name: rename one of the two files." >&2
+                exit 1
+            fi
+            # Leave an identical copy alone: writing anything into the folder, even a
+            # temporary file, makes LocalStack hot-reload the Lambda.
+            if render "$src" "$name" | cmp -s - "$dest"; then
+                continue
+            fi
         fi
-        tmp="$dest.tmp.$$"
-        {
-            echo "$HEADER_PREFIX$name by bin/sync-shared.sh."
-            echo "# Do not edit this copy: edit the original and run ./bin/sync-shared.sh"
-            cat "$src"
-        } > "$tmp"
-        # Leave an identical copy alone so its mtime does not change (no needless Lambda reload)
-        if cmp -s "$tmp" "$dest"; then
-            rm -f "$tmp"
-        else
-            mv -f "$tmp" "$dest"
-        fi
+        # Hidden name: Terraform does not package dotfiles and *.py globs do not see it
+        tmp="$svc_dir/.$name.tmp.$$"
+        render "$src" "$name" > "$tmp"
+        mv -f "$tmp" "$dest"
+        tmp=""
     done
     echo "  Synced ${#shared_files[@]} shared module(s) into backend/$svc_name"
 done
