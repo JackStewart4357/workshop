@@ -6,6 +6,39 @@ resource "aws_cloudfront_origin_access_control" "this" {
   signing_protocol                  = "sigv4"
 }
 
+# Runs on every request that is not routed to a Lambda (the default behaviour below).
+# The React app has its own routes (/login, /incidents/42, ...) that are not files in the
+# bucket, so those are answered with index.html and the app takes over from there.
+# This replaces a distribution-wide "404 -> 200 index.html" rule, which also rewrote every
+# 404 returned by the API into a web page, and never matched page routes anyway because
+# the private bucket answers 403, not 404, for a missing file.
+resource "aws_cloudfront_function" "spa_routes" {
+  count   = data.aws_caller_identity.this.id != "000000000000" ? 1 : 0
+  name    = format("%s-spa-routes-%s", var.aws_project, local.app_id)
+  runtime = "cloudfront-js-2.0"
+  comment = "Serve index.html for app routes; JSON 404 for unknown API paths"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      // An /api path only reaches this behaviour when no service owns it
+      if (request.uri === '/api' || request.uri.indexOf('/api/') === 0) {
+        return {
+          statusCode: 404,
+          statusDescription: 'Not Found',
+          headers: { 'content-type': { value: 'application/json' } },
+          body: '{"error": {"code": "not_found", "message": "No such API endpoint"}}'
+        };
+      }
+      // No file extension in the last segment: an app route, not a file
+      if (request.uri.split('/').pop().indexOf('.') === -1) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_distribution" "this" {
   count               = data.aws_caller_identity.this.id != "000000000000" ? 1 : 0
   enabled             = true
@@ -37,13 +70,6 @@ resource "aws_cloudfront_distribution" "this" {
         origin_ssl_protocols   = ["TLSv1.2"]
       }
     }
-  }
-
-  custom_error_response {
-    error_code            = 404
-    error_caching_min_ttl = 300
-    response_code         = 200
-    response_page_path    = "/index.html"
   }
 
   # logging_config {
@@ -96,6 +122,11 @@ resource "aws_cloudfront_distribution" "this" {
 
     target_origin_id       = local.origin_id
     viewer_protocol_policy = "redirect-to-https"
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = element(aws_cloudfront_function.spa_routes.*.arn, count.index)
+    }
 
     forwarded_values {
       query_string = false
