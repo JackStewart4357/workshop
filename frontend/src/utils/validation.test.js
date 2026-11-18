@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   validateCompanyEmail,
   validateEmail,
+  validateFloorLevel,
   validateForm,
   validateNewPassword,
   validateRequired,
@@ -62,6 +63,20 @@ describe('validateRequired', () => {
   it('measures length after trimming', () => {
     expect(validate('  abcde  ')).toBe('')
     expect(validate('abcdef')).toBe('Full name must be at most 5 characters')
+  })
+})
+
+describe('validateFloorLevel', () => {
+  it.each(['0', '2', ' 12 ', '-5', '200'])('accepts %s', (value) => {
+    expect(validateFloorLevel(value)).toBe('')
+  })
+
+  it.each(['', 'two', '1.5', '2nd', '--1', '1e2'])('asks for a whole number instead of "%s"', (value) => {
+    expect(validateFloorLevel(value)).toBe('Enter a whole number (0 is the ground floor)')
+  })
+
+  it.each(['-6', '201'])('keeps %s inside the range the API accepts', (value) => {
+    expect(validateFloorLevel(value)).toBe('Floor must be between -5 and 200')
   })
 })
 

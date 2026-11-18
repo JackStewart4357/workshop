@@ -1,4 +1,4 @@
-// Form checks that mirror the API's rules (backend/auth/function.py), so most mistakes are
+// Form checks that mirror the API's rules (backend/auth and backend/facilities), so most mistakes are
 // caught before a request is sent. The API still validates everything: these are for speed
 // and clearer feedback, not for security. Each returns an error message or ''.
 
@@ -6,6 +6,10 @@ export const EMAIL_DOMAIN = 'acme.inc'
 export const PASSWORD_MIN_LENGTH = 8
 export const PASSWORD_MAX_BYTES = 72
 export const NAME_MAX_LENGTH = 100
+export const ADDRESS_MAX_LENGTH = 200
+export const SEAT_CODE_MAX_LENGTH = 20
+export const FLOOR_MIN = -5
+export const FLOOR_MAX = 200
 
 const EMAIL_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/
 
@@ -42,6 +46,13 @@ export function validateNewPassword(value) {
   if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
     return 'Password must contain at least one letter and one number'
   }
+  return ''
+}
+
+export function validateFloorLevel(value) {
+  if (!/^-?\d+$/.test(value.trim())) return 'Enter a whole number (0 is the ground floor)'
+  const level = Number(value)
+  if (level < FLOOR_MIN || level > FLOOR_MAX) return `Floor must be between ${FLOOR_MIN} and ${FLOOR_MAX}`
   return ''
 }
 

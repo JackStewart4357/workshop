@@ -236,4 +236,26 @@ describe('App', () => {
     })
     expect(await screen.findByRole('alert')).toHaveTextContent('Your session has expired. Please sign in again.')
   })
+
+  it('an admin opens Facilities from the menu', async () => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    mockApi({
+      'POST /api/auth/refresh': () => ({ body: session(USERS.admin, '2') }),
+      'GET /api/facilities/buildings': ({ token }) =>
+        token === 'access-2' ? { body: { buildings: [] } } : apiError(401, 'unauthorized', 'Authentication is required'),
+    })
+    const user = renderApp('/')
+    await user.click(await screen.findByRole('link', { name: 'Facilities' }))
+    expect(await screen.findByRole('heading', { name: 'Facilities' })).toBeInTheDocument()
+    expect(screen.getByText('There are no buildings yet.')).toBeInTheDocument()
+  })
+
+  it.each([USERS.employee, USERS.engineer])('$role cannot open Facilities, even by typing its address', async (who) => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    const calls = mockApi({ 'POST /api/auth/refresh': () => ({ body: session(who, '2') }) })
+    renderApp('/facilities')
+    expect(await screen.findByRole('heading', { name: 'Access denied' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Facilities' })).not.toBeInTheDocument()
+    expect(calls.map((call) => call.path)).toEqual(['/api/auth/refresh'])
+  })
 })

@@ -6,7 +6,7 @@ import pytest
 
 import http_utils
 from conftest import make_event
-from http_utils import ApiError, clean_email, clean_text, dispatch, json_body, respond, respond_error, validate
+from http_utils import ApiError, clean_email, clean_int, clean_text, dispatch, json_body, respond, respond_error, validate
 
 
 def body_of(response):
@@ -114,6 +114,17 @@ def test_clean_text_rejects_characters_the_database_cannot_store(value):
 
 def test_clean_text_measures_length_after_trimming():
     assert clean_text("Name", 3)("  abc  ") == "abc"
+
+
+@pytest.mark.parametrize("value", [-5, 0, 7, 200])
+def test_clean_int_accepts_whole_numbers_in_range(value):
+    assert clean_int("Level", -5, 200)(value) == value
+
+
+@pytest.mark.parametrize("value", [None, "", "2", 2.0, 2.5, True, False, -6, 201, [2], {"n": 2}])
+def test_clean_int_rejects_everything_else(value):
+    with pytest.raises(ValueError, match="Level must be a whole number from -5 to 200"):
+        clean_int("Level", -5, 200)(value)
 
 
 def test_clean_email_normalises_case_and_whitespace():

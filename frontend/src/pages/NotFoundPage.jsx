@@ -5,7 +5,7 @@ import Typography from '@mui/material/Typography'
 
 export default function NotFoundPage() {
   return (
-    <Box component="main" sx={{ p: 4, textAlign: 'center' }}>
+    <Box sx={{ p: 4, textAlign: 'center' }}>
       <Typography variant="h1" gutterBottom>
         Page not found
       </Typography>

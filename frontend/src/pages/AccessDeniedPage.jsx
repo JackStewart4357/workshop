@@ -5,7 +5,7 @@ import Typography from '@mui/material/Typography'
 
 export default function AccessDeniedPage() {
   return (
-    <Box component="main" sx={{ p: 4, textAlign: 'center' }}>
+    <Box sx={{ p: 4, textAlign: 'center' }}>
       <Typography variant="h1" gutterBottom>
         Access denied
       </Typography>

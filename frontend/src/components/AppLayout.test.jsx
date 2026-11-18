@@ -5,13 +5,6 @@ import { describe, expect, it, vi } from 'vitest'
 import AppLayout from './AppLayout.jsx'
 import { USERS, renderWithProviders } from '../test/helpers.jsx'
 
-// Give the menu a second, admin-only entry so role filtering is visible.
-vi.mock('../navigation.js', async (importOriginal) => {
-  const original = await importOriginal()
-  const items = [...original.NAV_ITEMS, { label: 'Facilities', path: '/facilities', icon: () => null, roles: ['ADMIN'] }]
-  return { ...original, NAV_ITEMS: items, navItemsFor: (role) => items.filter((item) => item.roles.includes(role)) }
-})
-
 function renderLayout({ user = USERS.employee, width = 1280, logout = vi.fn().mockResolvedValue() } = {}) {
   renderWithProviders(
     <Routes>

@@ -103,6 +103,18 @@ def clean_text(label, max_length):
     return clean
 
 
+def clean_int(label, minimum, maximum):
+    """Cleaner factory: a required whole number from minimum to maximum."""
+
+    def clean(value):
+        # JSON true is an int to Python (True == 1), so it has to be ruled out by name
+        if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+            raise ValueError(f"{label} must be a whole number from {minimum} to {maximum}")
+        return value
+
+    return clean
+
+
 def clean_email(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Email is required")

@@ -144,3 +144,12 @@ def auth(auth_service):
     """The auth service with its one-time setup reset, as on a cold start."""
     auth_service._ready = False
     return auth_service
+
+
+def sign_in_as(role):
+    """Create a user with this role and return an access token for them."""
+    user = db.query(
+        "INSERT INTO users (email, full_name, password_hash, role) VALUES (%s, %s, 'x', %s) RETURNING *",
+        (f"{role.lower()}-{uuid.uuid4().hex[:8]}@acme.inc", role.title(), role),
+    )
+    return security.issue_token(user, "access", 60)
