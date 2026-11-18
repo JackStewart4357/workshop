@@ -20,7 +20,7 @@ import logging
 import os
 import re
 
-from db import query
+from db import IS_LOCAL, query
 from http_utils import ApiError, clean_email, clean_text, dispatch, json_body, respond, validate
 from security import (
     PASSWORD_MAX_BYTES,
@@ -38,7 +38,9 @@ ALLOWED_EMAIL_DOMAIN = "acme.inc"  # also enforced by a CHECK on users.email
 PASSWORD_MIN_LENGTH = 8
 # First facility admin, created only when no admin exists yet.
 SEED_ADMIN_EMAIL = os.getenv("SEED_ADMIN_EMAIL", f"admin@{ALLOWED_EMAIL_DOMAIN}")
-SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "Admin#12345")
+# The built-in password is for local development only. A deployed service must be given
+# SEED_ADMIN_PASSWORD; without it no admin is created, rather than one with a known password.
+SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD") or ("Admin#12345" if IS_LOCAL else "")
 
 # ---------------------------------------------------------------------------
 # One-time setup
@@ -55,7 +57,11 @@ def bootstrap():
     global _ready
     if _ready:
         return
-    if not query("SELECT 1 AS found FROM users WHERE role = 'ADMIN' LIMIT 1"):
+    if query("SELECT 1 AS found FROM users WHERE role = 'ADMIN' LIMIT 1"):
+        pass
+    elif not SEED_ADMIN_PASSWORD:
+        logger.error("No admin account exists and SEED_ADMIN_PASSWORD is not set: no admin was created")
+    else:
         query(
             "INSERT INTO users (email, full_name, password_hash, role) "
             "VALUES (%s, 'Facility Admin', %s, 'ADMIN') ON CONFLICT (email) DO NOTHING",
@@ -87,6 +93,15 @@ def clean_new_password(value):
         raise ValueError(f"Password must be at most {PASSWORD_MAX_BYTES} bytes")
     if not (re.search(r"[A-Za-z]", value) and re.search(r"\d", value)):
         raise ValueError("Password must contain at least one letter and one number")
+    return value
+
+
+def clean_login_password(value):
+    """Required, but never trimmed: it must match what register hashed, byte for byte."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("Password is required")
+    if len(value) > 1024:
+        raise ValueError("Password must be at most 1024 characters")
     return value
 
 
@@ -132,7 +147,7 @@ def register(event):
 
 
 def login(event):
-    fields = validate(json_body(event), {"email": clean_email, "password": clean_text("Password", 1024)})
+    fields = validate(json_body(event), {"email": clean_email, "password": clean_login_password})
     user = query("SELECT * FROM users WHERE email = %s", (fields["email"],))
     if not verify_password(fields["password"], user["password_hash"] if user else None):
         # Same answer for an unknown email and a wrong password.

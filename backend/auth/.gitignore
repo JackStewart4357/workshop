@@ -1,9 +1,7 @@
-# start-dev.sh installs this service's Python packages straight into this folder
-# (needed for LocalStack hot-reload). Ignore everything except our own source files.
+# Only this service's own source is tracked. Everything else in this folder is generated:
+#   - Python packages that start-dev.sh installs here for LocalStack hot-reload
+#   - db.py, http_utils.py, security.py, copied from backend/_shared by bin/sync-shared.sh
 /*
 !/.gitignore
 !/requirements.txt
 !/function.py
-!/db.py
-!/http_utils.py
-!/security.py

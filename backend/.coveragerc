@@ -1,0 +1,19 @@
+[run]
+branch = True
+# Measure everything under backend/ so a service that no test imports shows up at 0%
+# instead of being absent. (Service folders have no __init__.py, hence
+# include_namespace_packages below.)
+source = .
+omit =
+    _examples/*
+    .venv/*
+    tests/*
+
+[report]
+show_missing = True
+include_namespace_packages = True
+# Only our own code: the shared modules and each service's function.py.
+# (Service folders also hold pip-installed packages and synced copies of _shared.)
+include =
+    _shared/*.py
+    */function.py

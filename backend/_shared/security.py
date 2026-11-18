@@ -35,9 +35,12 @@ def hash_password(password):
 
 def verify_password(password, password_hash):
     """True only for the right password; a missing hash still costs one comparison."""
-    candidate = password.encode("utf-8")[:PASSWORD_MAX_BYTES]
+    candidate = password.encode("utf-8")
     expected = password_hash.encode("ascii") if password_hash else _DUMMY_HASH
-    return bcrypt.checkpw(candidate, expected) and bool(password_hash)
+    matches = bcrypt.checkpw(candidate[:PASSWORD_MAX_BYTES], expected)
+    # bcrypt ignores everything past 72 bytes, so a longer candidate must not be accepted
+    # just because its first 72 bytes are right.
+    return matches and bool(password_hash) and len(candidate) <= PASSWORD_MAX_BYTES
 
 
 # ---------------------------------------------------------------------------
