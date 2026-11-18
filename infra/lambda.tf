@@ -50,8 +50,9 @@ module "lambda" {
     max_age           = 0
   }
 
+  # Only the auth service creates the first admin, so only it is given that password
   environment_variables = {
-    for key, value in local.env_vars :
+    for key, value in merge(local.env_vars, each.key == "auth" ? { SEED_ADMIN_PASSWORD = var.seed_admin_password } : {}) :
     key => trimspace(value) if try(trimspace(value), "") != ""
   }
 
