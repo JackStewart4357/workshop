@@ -64,6 +64,7 @@ describe('RegisterPage', () => {
     expect(screen.getByText('Full name is required')).toBeInTheDocument()
     expect(screen.getByText('Email is required')).toBeInTheDocument()
     expect(screen.getByText('Password is required')).toBeInTheDocument()
+    expect(screen.getByLabelText(/full name/i)).toHaveFocus()
   })
 
   it('shows "email already exists" from the API beside the email field', async () => {
@@ -86,6 +87,33 @@ describe('RegisterPage', () => {
     const { user } = renderRegister({ auth: { register } })
     await fillAndSubmit(user)
     expect(await screen.findByRole('alert')).toHaveTextContent('Cannot reach the server')
+  })
+
+  it('moves focus to the field the API rejected', async () => {
+    const message = 'An account with this email already exists'
+    const register = vi
+      .fn()
+      .mockRejectedValue(new ApiError({ status: 409, code: 'conflict', message, details: { email: message } }))
+    const { user } = renderRegister({ auth: { register } })
+    await fillAndSubmit(user)
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    expect(screen.getByLabelText(/work email/i)).toHaveFocus()
+  })
+
+  it('moves focus to the first field when the error is only a banner', async () => {
+    const register = vi.fn().mockRejectedValue(
+      new ApiError({ status: 0, code: 'network_error', message: 'Cannot reach the server. Check your connection and try again.' }),
+    )
+    const { user } = renderRegister({ auth: { register } })
+    await fillAndSubmit(user)
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByLabelText(/full name/i)).toHaveFocus()
+  })
+
+  it('waits for the start-up session check before offering the form', () => {
+    renderRegister({ auth: { status: 'loading' } })
+    expect(screen.getByRole('progressbar', { name: 'Checking your session' })).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
   it('links back to sign in', async () => {

@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 
-// Shape: { user, status: 'loading' | 'ready', login, register, logout }
+// Shape: { user, status: 'loading' | 'ready', sessionEnd: null | 'expired' | 'signed-out',
+//          login, register, logout }
 export const AuthContext = createContext(null)
 
 /** The signed-in user and the actions that change it. */

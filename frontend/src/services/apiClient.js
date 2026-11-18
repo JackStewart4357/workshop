@@ -16,6 +16,7 @@ const REFRESH_TOKEN_KEY = 'acme.refreshToken'
 let accessToken = null
 let refreshInFlight = null
 let sessionExpiredHandler = null
+let sessionRefreshedHandler = null
 
 /** An error response from the API (or a network failure, with status 0). */
 export class ApiError extends Error {
@@ -65,6 +66,15 @@ export function hasStoredSession() {
 /** Register a callback for when the session can no longer be renewed. */
 export function onSessionExpired(handler) {
   sessionExpiredHandler = handler
+}
+
+/**
+ * Register a callback that receives the user each time the tokens are renewed. Tabs share
+ * one refresh token, so a renewal can return a different account (signed in from another
+ * tab) or a changed role: whoever displays the user must follow the tokens.
+ */
+export function onSessionRefreshed(handler) {
+  sessionRefreshedHandler = handler
 }
 
 async function send(path, { method = 'GET', body, token } = {}) {
@@ -122,7 +132,10 @@ export function refreshSession() {
       }
       try {
         const session = await send('/api/auth/refresh', { method: 'POST', body: { refresh_token: refreshToken } })
+        // Signed out while this was in flight: the sign-out wins.
+        if (!hasStoredSession()) throw new ApiError({ status: 401, code: 'unauthorized', message: 'Please sign in.' })
         storeTokens(session)
+        sessionRefreshedHandler?.(session.user)
         return session
       } catch (error) {
         // Only a definite rejection ends the session. On a network failure keep the

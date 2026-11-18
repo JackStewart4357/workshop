@@ -98,6 +98,54 @@ describe('LoginPage', () => {
     await waitFor(() => expect(screen.getByText('dashboard')).toBeInTheDocument())
   })
 
+  it('after wrong credentials the keyboard is back in the password field', async () => {
+    const login = vi
+      .fn()
+      .mockRejectedValue(new ApiError({ status: 401, code: 'invalid_credentials', message: 'Incorrect email or password' }))
+    const { user } = renderLogin({ auth: { login } })
+    await fillAndSubmit(user, { password: 'wrongpass1' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect email or password')
+    expect(screen.getByLabelText(/^password/i)).toHaveFocus()
+    await user.keyboard('XYZ')
+    expect(screen.getByLabelText(/^password/i)).toHaveValue('wrongpass1XYZ')
+  })
+
+  it('moves focus to the first field with a problem', async () => {
+    const { user } = renderLogin()
+    await fillAndSubmit(user, { email: '' })
+    expect(screen.getByLabelText(/email/i)).toHaveFocus()
+    expect(screen.getByLabelText(/email/i)).toHaveAccessibleDescription('Email is required')
+  })
+
+  it('waits for the start-up session check before offering the form', () => {
+    renderLogin({ auth: { status: 'loading' } })
+    expect(screen.getByRole('progressbar', { name: 'Checking your session' })).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('explains that the session expired, until a sign-in error takes its place', async () => {
+    const login = vi
+      .fn()
+      .mockRejectedValue(new ApiError({ status: 401, code: 'invalid_credentials', message: 'Incorrect email or password' }))
+    const { user } = renderLogin({ auth: { login, sessionEnd: 'expired' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('Your session has expired. Please sign in again.')
+    await fillAndSubmit(user)
+    expect(await screen.findByText('Incorrect email or password')).toBeInTheDocument()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
+  it('does not bring the expired notice back once a sign-in has been tried', async () => {
+    const { user } = renderLogin({ auth: { sessionEnd: 'expired' } })
+    await fillAndSubmit(user, { email: '' })
+    expect(screen.getByText('Email is required')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('says nothing about the session after a deliberate sign-out', () => {
+    renderLogin({ auth: { sessionEnd: 'signed-out' } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('can show and hide the password', async () => {
     const { user } = renderLogin()
     const password = screen.getByLabelText(/^password/i)

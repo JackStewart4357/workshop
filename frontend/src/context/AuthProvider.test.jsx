@@ -111,6 +111,26 @@ describe('AuthProvider', () => {
     expect(screen.getByText('user: nobody')).toBeInTheDocument()
   })
 
+  it('shows whoever the renewed tokens belong to, e.g. after another tab signed in as someone else', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      'POST /api/auth/login': () => ({ body: session(USERS.admin) }),
+      'GET /api/private': ({ token }) =>
+        token === 'access-2' ? { body: { ok: true } } : apiError(401, 'token_expired', 'Your session has expired'),
+      // Tabs share the stored refresh token: here it now belongs to the employee
+      'POST /api/auth/refresh': () => ({ body: session(USERS.employee, '2') }),
+    })
+    renderProvider()
+    await screen.findByText('status: ready')
+    await user.click(screen.getByRole('button', { name: 'login' }))
+    await screen.findByText('user: Facility Admin (ADMIN)')
+
+    await act(async () => {
+      await apiClient.api('/api/private')
+    })
+    expect(screen.getByText('user: Alice Johnson (EMPLOYEE)')).toBeInTheDocument()
+  })
+
   it('useAuth outside the provider explains the mistake', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     expect(() => render(<Probe />)).toThrow('useAuth must be used inside <AuthProvider>')

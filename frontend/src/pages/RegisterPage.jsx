@@ -7,8 +7,10 @@ import Link from '@mui/material/Link'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import AuthPageShell from '../components/AuthPageShell.jsx'
+import LoadingScreen from '../components/LoadingScreen.jsx'
 import PasswordField from '../components/PasswordField.jsx'
 import { useAuth } from '../context/AuthContext.js'
+import { useFocusAfterFailedSubmit } from '../utils/useFocusAfterFailedSubmit.js'
 import {
   EMAIL_DOMAIN,
   NAME_MAX_LENGTH,
@@ -24,7 +26,7 @@ import {
 const EMPTY = { full_name: '', email: '', password: '', confirmPassword: '' }
 
 export default function RegisterPage() {
-  const { user, register } = useAuth()
+  const { user, status, register } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const destination = location.state?.from || '/'
@@ -33,7 +35,11 @@ export default function RegisterPage() {
   const [fieldErrors, setFieldErrors] = useState({})
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [formRef, focusAfterFailure] = useFocusAfterFailedSubmit('full_name')
 
+  // Wait for the start-up session check: a sign-in made while it is still running would
+  // be overwritten (or wiped) by its result when it arrives.
+  if (status === 'loading') return <LoadingScreen label="Checking your session" />
   if (user) return <Navigate to={destination} replace />
 
   function handleChange(event) {
@@ -52,7 +58,10 @@ export default function RegisterPage() {
     })
     setFieldErrors(errors)
     setFormError('')
-    if (Object.keys(errors).length > 0) return
+    if (Object.keys(errors).length > 0) {
+      focusAfterFailure()
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -62,12 +71,13 @@ export default function RegisterPage() {
       setFieldErrors(error.fieldErrors || {})
       if (!error.fieldErrors || Object.keys(error.fieldErrors).length === 0) setFormError(error.message)
       setSubmitting(false)
+      focusAfterFailure()
     }
   }
 
   return (
     <AuthPageShell title="Create your account" subtitle={`Registration is open to @${EMAIL_DOMAIN} email addresses.`}>
-      <Box component="form" noValidate onSubmit={handleSubmit}>
+      <Box component="form" ref={formRef} noValidate onSubmit={handleSubmit}>
         {formError && (
           <Alert severity="error" sx={{ mt: 1 }}>
             {formError}

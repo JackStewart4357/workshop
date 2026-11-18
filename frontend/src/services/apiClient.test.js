@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { apiError, mockApi, session } from '../test/helpers.jsx'
+import { USERS, apiError, mockApi, session } from '../test/helpers.jsx'
 
 const REFRESH_KEY = 'acme.refreshToken'
 
@@ -127,6 +127,67 @@ describe('session renewal', () => {
     client.storeTokens(session())
     await expect(Promise.all([client.api('/api/a'), client.api('/api/b')])).resolves.toEqual(['a', 'b'])
     expect(calls.filter((call) => call.path === '/api/auth/refresh')).toHaveLength(1)
+  })
+
+  it('renews again the next time the access token expires', async () => {
+    let valid = 'access-2'
+    let renewals = 1
+    const calls = mockApi({
+      'GET /api/private': ({ token }) =>
+        token === valid ? { body: { ok: true } } : apiError(401, 'token_expired', 'Your session has expired'),
+      'POST /api/auth/refresh': () => ({ body: session(undefined, String(++renewals)) }),
+    })
+    const expired = vi.fn()
+    client.onSessionExpired(expired)
+    client.storeTokens(session())
+
+    await expect(client.api('/api/private')).resolves.toEqual({ ok: true }) // access-1 -> access-2
+    valid = 'access-3' // fifteen minutes later access-2 has expired too
+    await expect(client.api('/api/private')).resolves.toEqual({ ok: true })
+
+    const refreshes = calls.filter((call) => call.path === '/api/auth/refresh')
+    expect(refreshes.map((call) => call.body.refresh_token)).toEqual(['refresh-1', 'refresh-2'])
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it('tries the refresh again once the network is back', async () => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    await expect(client.refreshSession()).rejects.toMatchObject({ code: 'network_error' })
+
+    const calls = mockApi({ 'POST /api/auth/refresh': () => ({ body: session(undefined, '2') }) })
+    await expect(client.refreshSession()).resolves.toMatchObject({ access_token: 'access-2' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('reports who the renewed tokens belong to, and nothing when the renewal fails', async () => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    const refreshed = vi.fn()
+    client.onSessionRefreshed(refreshed)
+
+    mockApi({ 'POST /api/auth/refresh': () => ({ body: session(USERS.engineer, '2') }) })
+    await client.refreshSession()
+    expect(refreshed).toHaveBeenCalledExactlyOnceWith(USERS.engineer)
+
+    mockApi({ 'POST /api/auth/refresh': () => apiError(401, 'invalid_token', 'Your session is no longer valid') })
+    await expect(client.refreshSession()).rejects.toMatchObject({ status: 401 })
+    expect(refreshed).toHaveBeenCalledTimes(1)
+  })
+
+  it('a renewal that finishes after signing out does not bring the session back', async () => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    let answer
+    mockApi({ 'POST /api/auth/refresh': () => new Promise((resolve) => (answer = resolve)) })
+    const refreshed = vi.fn()
+    client.onSessionRefreshed(refreshed)
+
+    const renewal = client.refreshSession()
+    client.clearTokens() // signed out while the renewal was in flight
+    answer({ body: session(undefined, '2') })
+
+    await expect(renewal).rejects.toMatchObject({ status: 401 })
+    expect(client.hasStoredSession()).toBe(false)
+    expect(refreshed).not.toHaveBeenCalled()
   })
 
   it('ends the session when the refresh token is rejected', async () => {
