@@ -102,6 +102,27 @@ fi
 terraform apply -auto-approve
 echo "INFO: Infrastructure deployment complete!"
 
+# Aurora only accepts connections from inside the VPC, so the dbsetup Lambda applies
+# backend/_db/schema.sql. Safe on every deploy: it only creates what is missing.
+if [ "$ENVIRONMENT" = "aws" ]; then
+    echo "INFO: Applying database schema..."
+    DBSETUP_FUNCTION=$(terraform output -json lambda_urls | jq -r 'keys[] | select(contains("-dbsetup-"))')
+    RESULT_FILE=$(mktemp)
+    for attempt in 1 2 3; do
+        # A paused Aurora cluster can take longer to wake than one connection attempt allows
+        FUNCTION_ERROR=$(aws lambda invoke --function-name "$DBSETUP_FUNCTION" --no-cli-pager \
+            --query 'FunctionError' --output text "$RESULT_FILE") || FUNCTION_ERROR="invoke failed"
+        [ "$FUNCTION_ERROR" = "None" ] && break
+        echo "WARN: Schema not applied (attempt $attempt of 3): $(cat "$RESULT_FILE")"
+    done
+    rm -f "$RESULT_FILE"
+    if [ "$FUNCTION_ERROR" != "None" ]; then
+        echo "ERROR: Could not apply the database schema. Aborting..."
+        exit 1
+    fi
+    echo "INFO: Database schema applied"
+fi
+
 # Display API endpoint
 if [ -n "$API_BASE_URL" ]; then
     echo ""
