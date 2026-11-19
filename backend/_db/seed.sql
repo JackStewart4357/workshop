@@ -2,12 +2,16 @@
 --   psql -h localhost -U postgres -d postgres -f backend/_db/seed.sql
 --
 -- Safe to run repeatedly: every row has a fixed id and existing rows are left alone.
--- Run this BEFORE opening the app for the first time: the auth service otherwise creates
--- admin@acme.inc with a different id and every row below that refers to the admin fails.
+-- If the app was opened first, the auth service has already created admin@acme.inc with an
+-- id of its own; the first statement below gives that account the id the demo rows refer to.
+-- It keeps its own password. (Only possible while nothing refers to that admin yet.)
 -- NOT for production: every account below shares the password  Password123
 -- (stored as a bcrypt hash, cost 10).
 
 BEGIN;
+
+UPDATE users SET id = '10000000-0000-4000-8000-000000000001'
+WHERE email = 'admin@acme.inc' AND id <> '10000000-0000-4000-8000-000000000001';
 
 -- ---------------------------------------------------------------------------
 -- Users: 2 admins, 3 engineers, 4 employees

@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" > /dev/null 2>&1 || exit 1; pwd -P)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." > /dev/null 2>&1 || exit 1; pwd -P)"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 SHARED_DIR="$BACKEND_DIR/_shared"
-SCHEMA_FILE="$BACKEND_DIR/_db/schema.sql"
+DB_DIR="$BACKEND_DIR/_db"
 
 shopt -s nullglob
 shared_files=("$SHARED_DIR"/*.py)
@@ -104,12 +104,17 @@ for req in "$BACKEND_DIR"/*/requirements.txt; do
     done
     echo "  Synced ${#shared_files[@]} shared module(s) into backend/$svc_name"
 
-    # dbsetup applies the schema from inside the VPC, so it is packaged with its own copy
-    if [ "$svc_name" = "dbsetup" ] && ! cmp -s "$SCHEMA_FILE" "$svc_dir/schema.sql"; then
-        tmp="$svc_dir/.schema.sql.tmp.$$"
-        cp "$SCHEMA_FILE" "$tmp"
-        mv -f "$tmp" "$svc_dir/schema.sql"
-        tmp=""
-        echo "  Copied backend/_db/schema.sql into backend/$svc_name"
+    # dbsetup applies the schema (and, when asked, the demo data) from inside the VPC, so it
+    # is packaged with its own copies
+    if [ "$svc_name" = "dbsetup" ]; then
+        for sql in schema.sql seed.sql; do
+            if ! cmp -s "$DB_DIR/$sql" "$svc_dir/$sql"; then
+                tmp="$svc_dir/.$sql.tmp.$$"
+                cp "$DB_DIR/$sql" "$tmp"
+                mv -f "$tmp" "$svc_dir/$sql"
+                tmp=""
+                echo "  Copied backend/_db/$sql into backend/$svc_name"
+            fi
+        done
     fi
 done

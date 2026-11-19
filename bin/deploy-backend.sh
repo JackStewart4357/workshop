@@ -107,10 +107,18 @@ echo "INFO: Infrastructure deployment complete!"
 if [ "$ENVIRONMENT" = "aws" ]; then
     echo "INFO: Applying database schema..."
     DBSETUP_FUNCTION=$(terraform output -json lambda_urls | jq -r 'keys[] | select(contains("-dbsetup-"))')
+    # Demo data is opt-in:  SEED_DEMO_DATA=true ./bin/deploy-backend.sh  also loads
+    # backend/_db/seed.sql. Load it before the app is first used (see that file's header).
+    DBSETUP_PAYLOAD='{}'
+    if [ "${SEED_DEMO_DATA:-}" = "true" ]; then
+        DBSETUP_PAYLOAD='{"seed": true}'
+        echo "INFO: Demo data will be loaded too (demo accounts share the password in backend/_db/seed.sql)"
+    fi
     RESULT_FILE=$(mktemp)
     for attempt in 1 2 3; do
         # A paused Aurora cluster can take longer to wake than one connection attempt allows
         FUNCTION_ERROR=$(aws lambda invoke --function-name "$DBSETUP_FUNCTION" --no-cli-pager \
+            --cli-binary-format raw-in-base64-out --payload "$DBSETUP_PAYLOAD" \
             --query 'FunctionError' --output text "$RESULT_FILE") || FUNCTION_ERROR="invoke failed"
         [ "$FUNCTION_ERROR" = "None" ] && break
         echo "WARN: Schema not applied (attempt $attempt of 3): $(cat "$RESULT_FILE")"

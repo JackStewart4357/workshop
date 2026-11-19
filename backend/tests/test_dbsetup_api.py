@@ -26,7 +26,7 @@ def test_direct_invoke_creates_what_is_missing(dbsetup):
     db.query("DROP TABLE ai_suggestions", fetch=False)
     assert not table_exists("ai_suggestions")
 
-    assert dbsetup.handler({}, None) == {"applied": "schema.sql"}
+    assert dbsetup.handler({}, None) == {"applied": ["schema.sql"]}
 
     assert table_exists("ai_suggestions")
 
@@ -38,10 +38,47 @@ def test_applying_again_keeps_existing_data(dbsetup):
     )
     categories = db.query("SELECT count(*) AS total FROM categories")["total"]
 
-    assert dbsetup.handler() == {"applied": "schema.sql"}
+    assert dbsetup.handler() == {"applied": ["schema.sql"]}
 
     assert db.query("SELECT count(*) AS total FROM users")["total"] == 1
     assert db.query("SELECT count(*) AS total FROM categories")["total"] == categories
+
+
+def test_packaged_demo_data_is_the_real_demo_data(dbsetup):
+    assert dbsetup.SEED_FILE == BACKEND_DIR / "dbsetup" / "seed.sql"
+    assert dbsetup.SEED_FILE.read_text() == (BACKEND_DIR / "_db" / "seed.sql").read_text()
+
+
+def demo_rows():
+    return db.query(
+        "SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM users WHERE role = 'ADMIN') AS admins, "
+        "(SELECT count(*) FROM engineer_profiles WHERE manager_id IS NOT NULL) AS managed_engineers, "
+        "(SELECT count(*) FROM buildings) AS buildings, (SELECT count(*) FROM incidents) AS incidents"
+    )
+
+
+def test_the_demo_data_is_loaded_only_when_asked_for_and_loading_it_again_changes_nothing(dbsetup):
+    assert dbsetup.handler({"seed": False}, None) == {"applied": ["schema.sql"]}
+    assert demo_rows()["users"] == 0
+
+    assert dbsetup.handler({"seed": True}, None) == {"applied": ["schema.sql", "seed.sql"]}
+    loaded = demo_rows()
+    assert loaded == {"users": 9, "admins": 2, "managed_engineers": 3, "buildings": 2, "incidents": 12}
+
+    assert dbsetup.handler({"seed": True}, None) == {"applied": ["schema.sql", "seed.sql"]}
+    assert demo_rows() == loaded
+
+
+def test_the_demo_data_loads_over_an_admin_the_app_created_first_and_keeps_their_password(dbsetup):
+    # The auth service creates admin@acme.inc, with an id of its own, the first time the app is opened
+    db.query(
+        "INSERT INTO users (email, full_name, password_hash, role) VALUES ('admin@acme.inc', 'Facility Admin', 'their-own', 'ADMIN')",
+        fetch=False,
+    )
+    assert dbsetup.handler({"seed": True}, None) == {"applied": ["schema.sql", "seed.sql"]}
+    assert demo_rows() == {"users": 9, "admins": 2, "managed_engineers": 3, "buildings": 2, "incidents": 12}
+    admin = db.query("SELECT id, password_hash FROM users WHERE email = 'admin@acme.inc'")
+    assert (str(admin["id"]), admin["password_hash"]) == ("10000000-0000-4000-8000-000000000001", "their-own")
 
 
 def test_a_failing_schema_is_not_half_applied(dbsetup, monkeypatch, tmp_path):
