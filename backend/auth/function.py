@@ -18,12 +18,14 @@ Shared building blocks live beside this file:
 
 import logging
 import os
-import re
 
 from db import IS_LOCAL, query
 from http_utils import ApiError, clean_email, clean_text, dispatch, json_body, respond, validate
 from security import (
-    PASSWORD_MAX_BYTES,
+    ALLOWED_EMAIL_DOMAIN,
+    EMAIL_TAKEN,
+    clean_company_email,
+    clean_new_password,
     current_user,
     hash_password,
     issue_session_tokens,
@@ -34,9 +36,6 @@ from security import (
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-ALLOWED_EMAIL_DOMAIN = "acme.inc"  # also enforced by a CHECK on users.email
-PASSWORD_MIN_LENGTH = 8
-EMAIL_TAKEN = "An account with this email already exists"
 # First facility admin, created only when no admin exists yet.
 SEED_ADMIN_EMAIL = os.getenv("SEED_ADMIN_EMAIL", f"admin@{ALLOWED_EMAIL_DOMAIN}")
 # The built-in password is for local development only. A deployed service must be given
@@ -87,27 +86,6 @@ def bootstrap():
 # ---------------------------------------------------------------------------
 # Auth-specific validation
 # ---------------------------------------------------------------------------
-
-
-def clean_company_email(value):
-    value = clean_email(value)
-    if not value.endswith("@" + ALLOWED_EMAIL_DOMAIN):
-        raise ValueError(f"Only @{ALLOWED_EMAIL_DOMAIN} email addresses can register")
-    return value
-
-
-def clean_new_password(value):
-    if not isinstance(value, str) or not value:
-        raise ValueError("Password is required")
-    if len(value) < PASSWORD_MIN_LENGTH:
-        raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
-    if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
-        raise ValueError("Password contains characters that are not valid text")
-    if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
-        raise ValueError(f"Password must be at most {PASSWORD_MAX_BYTES} bytes")
-    if not (re.search(r"[A-Za-z]", value) and re.search(r"\d", value)):
-        raise ValueError("Password must contain at least one letter and one number")
-    return value
 
 
 def clean_login_password(value):

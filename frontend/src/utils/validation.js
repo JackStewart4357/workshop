@@ -1,6 +1,7 @@
-// Form checks that mirror the API's rules (backend/auth and backend/facilities), so most mistakes are
-// caught before a request is sent. The API still validates everything: these are for speed
-// and clearer feedback, not for security. Each returns an error message or ''.
+// Form checks that mirror the API's rules (backend/auth, backend/facilities and
+// backend/engineers), so most mistakes are caught before a request is sent. The API still
+// validates everything: these are for speed and clearer feedback, not for security. Each
+// returns an error message or ''.
 
 export const EMAIL_DOMAIN = 'acme.inc'
 export const PASSWORD_MIN_LENGTH = 8
@@ -10,6 +11,9 @@ export const ADDRESS_MAX_LENGTH = 200
 export const SEAT_CODE_MAX_LENGTH = 20
 export const FLOOR_MIN = -5
 export const FLOOR_MAX = 200
+export const SPECIALISM_MAX_LENGTH = 100
+export const TICKETS_MIN = 1
+export const TICKETS_MAX = 50
 
 const EMAIL_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/
 
@@ -54,6 +58,13 @@ export function validateFloorLevel(value) {
   const level = Number(value)
   if (level < FLOOR_MIN || level > FLOOR_MAX) return `Floor must be between ${FLOOR_MIN} and ${FLOOR_MAX}`
   return ''
+}
+
+/** How many open tickets an engineer can hold at once. */
+export function validateMaxTickets(value) {
+  const tickets = /^\d+$/.test(value.trim()) ? Number(value) : NaN
+  if (tickets >= TICKETS_MIN && tickets <= TICKETS_MAX) return ''
+  return `Max open tickets must be a whole number from ${TICKETS_MIN} to ${TICKETS_MAX}`
 }
 
 // Run {field: validator} over the form values; returns only the fields that failed.

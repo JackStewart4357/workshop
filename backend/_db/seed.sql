@@ -2,16 +2,19 @@
 --   psql -h localhost -U postgres -d postgres -f backend/_db/seed.sql
 --
 -- Safe to run repeatedly: every row has a fixed id and existing rows are left alone.
+-- Run this BEFORE opening the app for the first time: the auth service otherwise creates
+-- admin@acme.inc with a different id and every row below that refers to the admin fails.
 -- NOT for production: every account below shares the password  Password123
 -- (stored as a bcrypt hash, cost 10).
 
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- Users: 1 admin, 3 engineers, 4 employees
+-- Users: 2 admins, 3 engineers, 4 employees
 -- ---------------------------------------------------------------------------
 INSERT INTO users (id, email, full_name, password_hash, role) VALUES
     ('10000000-0000-4000-8000-000000000001', 'admin@acme.inc', 'Facility Admin', '$2b$10$.kLFyFbFHr4G2YPCu65i.e4nTs.40Oqv5RgHnl7hgpyRIChvGXKWi', 'ADMIN'),
+    ('10000000-0000-4000-8000-000000000009', 'morgan.admin@acme.inc', 'Morgan Lee', '$2b$10$.kLFyFbFHr4G2YPCu65i.e4nTs.40Oqv5RgHnl7hgpyRIChvGXKWi', 'ADMIN'),
     ('10000000-0000-4000-8000-000000000002', 'priya.engineer@acme.inc', 'Priya Sharma', '$2b$10$.kLFyFbFHr4G2YPCu65i.e4nTs.40Oqv5RgHnl7hgpyRIChvGXKWi', 'ENGINEER'),
     ('10000000-0000-4000-8000-000000000003', 'marco.engineer@acme.inc', 'Marco Rossi', '$2b$10$.kLFyFbFHr4G2YPCu65i.e4nTs.40Oqv5RgHnl7hgpyRIChvGXKWi', 'ENGINEER'),
     ('10000000-0000-4000-8000-000000000004', 'lena.engineer@acme.inc', 'Lena Fischer', '$2b$10$.kLFyFbFHr4G2YPCu65i.e4nTs.40Oqv5RgHnl7hgpyRIChvGXKWi', 'ENGINEER'),
@@ -27,6 +30,9 @@ INSERT INTO engineer_profiles (id, user_id, specialism, is_available, max_open_t
     ('20000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000003', 'Electrical & software',  TRUE,  4),
     ('20000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000004', 'HVAC & general facility', FALSE, 3)
 ON CONFLICT DO NOTHING;
+-- The seeded admin manages the seeded engineers (also fills rows seeded before the column existed).
+UPDATE engineer_profiles SET manager_id = '10000000-0000-4000-8000-000000000001'
+WHERE manager_id IS NULL AND id::text LIKE '20000000-0000-4000-8000-00000000000_';
 
 -- ---------------------------------------------------------------------------
 -- Facilities: 2 buildings, 5 floors, 10 seats

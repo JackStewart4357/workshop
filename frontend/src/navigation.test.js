@@ -6,10 +6,10 @@ describe('navigation', () => {
     expect(navItemsFor(role).map((item) => item.path)).toContain('/')
   })
 
-  it('shows Facilities to admins only', () => {
-    expect(navItemsFor(ROLES.ADMIN).map((item) => item.path)).toContain('/facilities')
-    expect(navItemsFor(ROLES.EMPLOYEE).map((item) => item.path)).not.toContain('/facilities')
-    expect(navItemsFor(ROLES.ENGINEER).map((item) => item.path)).not.toContain('/facilities')
+  it.each(['/facilities', '/engineers'])('shows %s to admins only', (path) => {
+    expect(navItemsFor(ROLES.ADMIN).map((item) => item.path)).toContain(path)
+    expect(navItemsFor(ROLES.EMPLOYEE).map((item) => item.path)).not.toContain(path)
+    expect(navItemsFor(ROLES.ENGINEER).map((item) => item.path)).not.toContain(path)
   })
 
   it('only returns items that list the role', () => {

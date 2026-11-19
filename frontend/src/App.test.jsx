@@ -258,4 +258,28 @@ describe('App', () => {
     expect(screen.queryByRole('link', { name: 'Facilities' })).not.toBeInTheDocument()
     expect(calls.map((call) => call.path)).toEqual(['/api/auth/refresh'])
   })
+
+  it('an admin opens Engineers from the menu', async () => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    const asAdmin = (body) => ({ token }) =>
+      token === 'access-2' ? { body } : apiError(401, 'unauthorized', 'Authentication is required')
+    mockApi({
+      'POST /api/auth/refresh': () => ({ body: session(USERS.admin, '2') }),
+      'GET /api/engineers/profiles': asAdmin({ profiles: [] }),
+      'GET /api/engineers/managers': asAdmin({ managers: [] }),
+    })
+    const user = renderApp('/')
+    await user.click(await screen.findByRole('link', { name: 'Engineers' }))
+    expect(await screen.findByRole('heading', { name: 'Engineers' })).toBeInTheDocument()
+    expect(screen.getByText('There are no engineers yet.')).toBeInTheDocument()
+  })
+
+  it.each([USERS.employee, USERS.engineer])('$role cannot open Engineers, even by typing its address', async (who) => {
+    window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+    const calls = mockApi({ 'POST /api/auth/refresh': () => ({ body: session(who, '2') }) })
+    renderApp('/engineers')
+    expect(await screen.findByRole('heading', { name: 'Access denied' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Engineers' })).not.toBeInTheDocument()
+    expect(calls.map((call) => call.path)).toEqual(['/api/auth/refresh'])
+  })
 })

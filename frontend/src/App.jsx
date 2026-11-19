@@ -3,6 +3,7 @@ import AppLayout from './components/AppLayout.jsx'
 import ProtectedRoute from './components/ProtectedRoute.jsx'
 import { ROLES } from './navigation.js'
 import DashboardPage from './pages/DashboardPage.jsx'
+import EngineersPage from './pages/EngineersPage.jsx'
 import FacilitiesPage from './pages/FacilitiesPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
@@ -21,6 +22,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route element={<ProtectedRoute roles={[ROLES.ADMIN]} />}>
             <Route path="/facilities" element={<FacilitiesPage />} />
+            <Route path="/engineers" element={<EngineersPage />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />
         </Route>

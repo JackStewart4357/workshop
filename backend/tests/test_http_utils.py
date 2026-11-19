@@ -6,7 +6,19 @@ import pytest
 
 import http_utils
 from conftest import make_event
-from http_utils import ApiError, clean_email, clean_int, clean_text, dispatch, json_body, respond, respond_error, validate
+from http_utils import (
+    ApiError,
+    clean_bool,
+    clean_email,
+    clean_int,
+    clean_text,
+    clean_uuid,
+    dispatch,
+    json_body,
+    respond,
+    respond_error,
+    validate,
+)
 
 
 def body_of(response):
@@ -125,6 +137,31 @@ def test_clean_int_accepts_whole_numbers_in_range(value):
 def test_clean_int_rejects_everything_else(value):
     with pytest.raises(ValueError, match="Level must be a whole number from -5 to 200"):
         clean_int("Level", -5, 200)(value)
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_clean_bool_accepts_only_true_and_false(value):
+    assert clean_bool("Active")(value) is value
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "", [], {}])
+def test_clean_bool_rejects_everything_else(value):
+    with pytest.raises(ValueError, match="Active must be true or false"):
+        clean_bool("Active")(value)
+
+
+@pytest.mark.parametrize("value", ["10000000-0000-4000-8000-00000000000a", "ABCDEF12-3456-7890-ABCD-EF1234567890"])
+def test_clean_uuid_accepts_an_id(value):
+    assert clean_uuid("Manager")(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", 7, "42", "10000000-0000-4000-8000-00000000000", "10000000-0000-4000-8000-00000000000a\n", " 10000000-0000-4000-8000-00000000000a", "g0000000-0000-4000-8000-00000000000a", ["10000000-0000-4000-8000-00000000000a"]],
+)
+def test_clean_uuid_rejects_everything_else(value):
+    with pytest.raises(ValueError, match="Manager is required"):
+        clean_uuid("Manager")(value)
 
 
 def test_clean_email_normalises_case_and_whitespace():

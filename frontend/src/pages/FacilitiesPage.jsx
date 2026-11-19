@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -6,7 +6,6 @@ import Chip from '@mui/material/Chip'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
-import DialogContentText from '@mui/material/DialogContentText'
 import DialogTitle from '@mui/material/DialogTitle'
 import IconButton from '@mui/material/IconButton'
 import Paper from '@mui/material/Paper'
@@ -17,15 +16,17 @@ import AddIcon from '@mui/icons-material/Add'
 import CancelIcon from '@mui/icons-material/Cancel'
 import DeleteIcon from '@mui/icons-material/DeleteOutlined'
 import EditIcon from '@mui/icons-material/Edit'
+import ConfirmDialog from '../components/ConfirmDialog.jsx'
+import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import * as facilities from '../services/facilitiesService.js'
-import { useFocusAfterFailedSubmit } from '../utils/useFocusAfterFailedSubmit.js'
+import { useDialogForm } from '../utils/useDialogForm.js'
+import { useServerList } from '../utils/useServerList.js'
 import {
   ADDRESS_MAX_LENGTH,
   NAME_MAX_LENGTH,
   SEAT_CODE_MAX_LENGTH,
   validateFloorLevel,
-  validateForm,
   validateRequired,
 } from '../utils/validation.js'
 
@@ -37,39 +38,14 @@ const validateSeatCode = validateRequired('Seat code', SEAT_CODE_MAX_LENGTH)
 
 /** The form for a new building, or for changing an existing one's name and address. */
 function BuildingDialog({ building, onSave, onClose }) {
-  const [values, setValues] = useState({ name: building.name ?? '', address: building.address ?? '' })
-  const [fieldErrors, setFieldErrors] = useState({})
-  const [formError, setFormError] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [formRef, focusAfterFailure] = useFocusAfterFailedSubmit('name')
-
-  function handleChange(event) {
-    const { name, value } = event.target
-    setValues((current) => ({ ...current, [name]: value }))
-    setFieldErrors((current) => ({ ...current, [name]: '' }))
-  }
-
-  async function handleSubmit(event) {
-    event.preventDefault()
-    const errors = validateForm(values, BUILDING_RULES)
-    setFieldErrors(errors)
-    setFormError('')
-    if (Object.keys(errors).length > 0) {
-      focusAfterFailure()
-      return
-    }
-
-    setSaving(true)
-    const failure = await onSave({ name: values.name.trim(), address: values.address.trim() })
-    if (!failure) {
-      onClose()
-      return
-    }
-    setFieldErrors(failure.fieldErrors)
-    if (Object.keys(failure.fieldErrors).length === 0) setFormError(failure.message)
-    setSaving(false)
-    focusAfterFailure()
-  }
+  const { formError, saving, formRef, handleSubmit, field } = useDialogForm({
+    initial: { name: building.name ?? '', address: building.address ?? '' },
+    rules: BUILDING_RULES,
+    toRequest: (values) => ({ name: values.name.trim(), address: values.address.trim() }),
+    onSave,
+    onClose,
+    firstField: 'name',
+  })
 
   return (
     <Dialog open onClose={saving ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="building-dialog-title">
@@ -77,27 +53,8 @@ function BuildingDialog({ building, onSave, onClose }) {
         <DialogTitle id="building-dialog-title">{building.id ? 'Edit building' : 'Add building'}</DialogTitle>
         <DialogContent>
           {formError && <Alert severity="error">{formError}</Alert>}
-          <TextField
-            label="Name"
-            name="name"
-            autoFocus
-            required
-            value={values.name}
-            onChange={handleChange}
-            error={Boolean(fieldErrors.name)}
-            helperText={fieldErrors.name}
-            disabled={saving}
-          />
-          <TextField
-            label="Address"
-            name="address"
-            required
-            value={values.address}
-            onChange={handleChange}
-            error={Boolean(fieldErrors.address)}
-            helperText={fieldErrors.address}
-            disabled={saving}
-          />
+          <TextField label="Name" autoFocus required {...field('name')} />
+          <TextField label="Address" required {...field('address')} />
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose} disabled={saving}>
@@ -157,60 +114,21 @@ function InlineAdd({ label, button, type = 'text', validate, onAdd, busy }) {
 
 /** The one admin screen for buildings, their floors and the seats on each floor. */
 export default function FacilitiesPage() {
-  const [buildings, setBuildings] = useState(null) // null until the first load finishes
-  const [loadError, setLoadError] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const {
+    items: buildings, // null until the first load finishes
+    loadError,
+    retry,
+    error,
+    setError,
+    busy,
+    change,
+    removing, // { what, note, run } waiting for confirmation
+    setRemoving,
+    confirmRemove,
+  } = useServerList(facilities.listBuildings)
   const [editing, setEditing] = useState(null) // the building in the dialog; {} for a new one
-  const [removing, setRemoving] = useState(null) // { what, note, run } waiting for confirmation
 
-  const load = useCallback(
-    () => facilities.listBuildings().then(setBuildings, (failure) => setLoadError(failure.message)),
-    [],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
-
-  // Every change goes through here: send it, then reload the whole tree so the screen shows
-  // what the server holds. Resolves with the error, or null when it worked.
-  async function change(action) {
-    setBusy(true)
-    setError('')
-    try {
-      await action()
-      await load() // if only the reload fails, the change still happened: load() offers "Try again"
-      return null
-    } catch (failure) {
-      return failure
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function confirmRemove() {
-    const failure = await change(removing.run)
-    setRemoving(null)
-    if (failure) setError(failure.message) // e.g. "This building is used by incidents..."
-  }
-
-  if (loadError) {
-    return (
-      <Stack spacing={2} sx={{ alignItems: 'flex-start' }}>
-        <Typography variant="h1">Facilities</Typography>
-        <Alert severity="error">{loadError}</Alert>
-        <Button
-          variant="contained"
-          onClick={() => {
-            setLoadError('')
-            load()
-          }}
-        >
-          Try again
-        </Button>
-      </Stack>
-    )
-  }
+  if (loadError) return <LoadFailed title="Facilities" message={loadError} onRetry={retry} />
   if (!buildings) return <LoadingScreen label="Loading facilities" />
 
   return (
@@ -328,20 +246,7 @@ export default function FacilitiesPage() {
         />
       )}
       {removing && (
-        <Dialog open onClose={busy ? undefined : () => setRemoving(null)} aria-labelledby="remove-dialog-title">
-          <DialogTitle id="remove-dialog-title">Remove {removing.what}?</DialogTitle>
-          <DialogContent>
-            <DialogContentText>{removing.note} This cannot be undone.</DialogContentText>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setRemoving(null)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button color="error" variant="contained" loading={busy} onClick={confirmRemove}>
-              Remove
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <ConfirmDialog {...removing} busy={busy} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
       )}
     </Stack>
   )

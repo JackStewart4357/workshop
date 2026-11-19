@@ -46,6 +46,7 @@ def respond_error(error):
 # Request body and validation
 # ---------------------------------------------------------------------------
 
+_UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 _EMAIL_RE = re.compile(r"^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$")
 
 
@@ -115,6 +116,28 @@ def clean_int(label, minimum, maximum):
     return clean
 
 
+def clean_bool(label):
+    """Cleaner factory: a required JSON true or false."""
+
+    def clean(value):
+        if not isinstance(value, bool):
+            raise ValueError(f"{label} must be true or false")
+        return value
+
+    return clean
+
+
+def clean_uuid(label):
+    """Cleaner factory: a required row id, in the same form dispatch() accepts in a path."""
+
+    def clean(value):
+        if not isinstance(value, str) or not re.fullmatch(_UUID, value):
+            raise ValueError(f"{label} is required")
+        return value
+
+    return clean
+
+
 def clean_email(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Email is required")
@@ -127,9 +150,6 @@ def clean_email(value):
 # ---------------------------------------------------------------------------
 # Routing
 # ---------------------------------------------------------------------------
-
-
-_UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 
 
 def _path_params(route_path, path):

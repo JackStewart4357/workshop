@@ -2,6 +2,7 @@
 
 import functools
 import os
+import re
 import secrets
 import time
 import uuid
@@ -10,7 +11,7 @@ import bcrypt
 import jwt
 
 from db import query
-from http_utils import ApiError
+from http_utils import ApiError, clean_email
 
 ROLES = ("EMPLOYEE", "ENGINEER", "ADMIN")
 
@@ -19,8 +20,37 @@ REFRESH_TOKEN_TTL = int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", str(7 * 24 * 60 *
 # Lambdas run with 128 MB, where CPU is throttled: cost 10 keeps login fast enough.
 BCRYPT_ROUNDS = int(os.getenv("BCRYPT_ROUNDS", "10"))
 PASSWORD_MAX_BYTES = 72  # bcrypt ignores anything beyond 72 bytes
+PASSWORD_MIN_LENGTH = 8
+ALLOWED_EMAIL_DOMAIN = "acme.inc"  # also enforced by a CHECK on users.email
+EMAIL_TAKEN = "An account with this email already exists"
 
 _jwt_secret = os.getenv("JWT_SECRET", "")
+
+# ---------------------------------------------------------------------------
+# Validation for new accounts (registration, and engineers created by an admin)
+# ---------------------------------------------------------------------------
+
+
+def clean_company_email(value):
+    value = clean_email(value)
+    if not value.endswith("@" + ALLOWED_EMAIL_DOMAIN):
+        raise ValueError(f"Only @{ALLOWED_EMAIL_DOMAIN} email addresses can register")
+    return value
+
+
+def clean_new_password(value):
+    if not isinstance(value, str) or not value:
+        raise ValueError("Password is required")
+    if len(value) < PASSWORD_MIN_LENGTH:
+        raise ValueError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+    if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        raise ValueError("Password contains characters that are not valid text")
+    if len(value.encode("utf-8")) > PASSWORD_MAX_BYTES:
+        raise ValueError(f"Password must be at most {PASSWORD_MAX_BYTES} bytes")
+    if not (re.search(r"[A-Za-z]", value) and re.search(r"\d", value)):
+        raise ValueError("Password must contain at least one letter and one number")
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Passwords

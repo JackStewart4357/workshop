@@ -1,5 +1,6 @@
 import ApartmentIcon from '@mui/icons-material/Apartment'
 import DashboardIcon from '@mui/icons-material/Dashboard'
+import EngineeringIcon from '@mui/icons-material/Engineering'
 
 export const ROLES = { EMPLOYEE: 'EMPLOYEE', ENGINEER: 'ENGINEER', ADMIN: 'ADMIN' }
 
@@ -14,6 +15,7 @@ export const ROLE_LABELS = {
 export const NAV_ITEMS = [
   { label: 'Dashboard', path: '/', icon: DashboardIcon, roles: [ROLES.EMPLOYEE, ROLES.ENGINEER, ROLES.ADMIN] },
   { label: 'Facilities', path: '/facilities', icon: ApartmentIcon, roles: [ROLES.ADMIN] },
+  { label: 'Engineers', path: '/engineers', icon: EngineeringIcon, roles: [ROLES.ADMIN] },
 ]
 
 export function navItemsFor(role) {

@@ -26,9 +26,12 @@ CREATE TABLE IF NOT EXISTS engineer_profiles (
     specialism       TEXT NOT NULL,
     is_available     BOOLEAN NOT NULL DEFAULT TRUE,
     max_open_tickets INTEGER NOT NULL DEFAULT 5 CHECK (max_open_tickets > 0),
+    manager_id       UUID REFERENCES users (id),          -- the admin who alone may read this engineer's feedback
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- For databases created before the manager column existed.
+ALTER TABLE engineer_profiles ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users (id);
 
 CREATE TABLE IF NOT EXISTS buildings (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),

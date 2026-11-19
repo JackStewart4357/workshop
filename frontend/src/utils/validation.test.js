@@ -4,6 +4,7 @@ import {
   validateEmail,
   validateFloorLevel,
   validateForm,
+  validateMaxTickets,
   validateNewPassword,
   validateRequired,
 } from './validation.js'
@@ -77,6 +78,16 @@ describe('validateFloorLevel', () => {
 
   it.each(['-6', '201'])('keeps %s inside the range the API accepts', (value) => {
     expect(validateFloorLevel(value)).toBe('Floor must be between -5 and 200')
+  })
+})
+
+describe('validateMaxTickets', () => {
+  it.each(['1', '5', ' 12 ', '50'])('accepts %s', (value) => {
+    expect(validateMaxTickets(value)).toBe('')
+  })
+
+  it.each(['', 'five', '2.5', '-3', '1e1', '0', '51'])('asks for a whole number from 1 to 50 instead of "%s"', (value) => {
+    expect(validateMaxTickets(value)).toBe('Max open tickets must be a whole number from 1 to 50')
   })
 })
 
