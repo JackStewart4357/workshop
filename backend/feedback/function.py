@@ -28,6 +28,7 @@ RULES = {"rating": clean_int("Rating", 1, 5), "comment": optional(clean_text("Co
 NOT_YET = "Feedback can be given once the incident is resolved"
 NO_ENGINEER = "No engineer worked on this incident"
 ALREADY_GIVEN = "You have already given feedback on this incident"
+OWN_WORK = "You cannot give feedback on your own work"
 NOT_THE_MANAGER = "Only this engineer's manager can read their feedback"
 
 
@@ -38,8 +39,10 @@ def health(_event):
 def reported_incident(user, incident_id):
     """The incident, if the caller reported it. Anyone else is told it does not exist."""
     incident = query(
-        "SELECT i.id, i.status, i.assignee_id, f.id AS feedback_id FROM incidents i "
-        "LEFT JOIN incident_feedback f ON f.incident_id = i.id WHERE i.id = %s AND i.reporter_id = %s",
+        "SELECT i.id, i.status, i.assignee_id, i.resolved_at, f.id AS feedback_id, "
+        "p.user_id = i.reporter_id AS own_work FROM incidents i "
+        "LEFT JOIN incident_feedback f ON f.incident_id = i.id "
+        "LEFT JOIN engineer_profiles p ON p.id = i.assignee_id WHERE i.id = %s AND i.reporter_id = %s",
         (incident_id, user["id"]),
     )
     if not incident:
@@ -53,8 +56,10 @@ def refusal(incident):
         return ALREADY_GIVEN
     if incident["status"] not in ("RESOLVED", "CLOSED"):
         return NOT_YET
-    if not incident["assignee_id"]:
+    if not incident["assignee_id"] or not incident["resolved_at"]:  # unassigned, or closed without being worked on
         return NO_ENGINEER
+    if incident["own_work"]:  # an engineer who reported the incident they then resolved
+        return OWN_WORK
     return None
 
 

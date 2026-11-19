@@ -1001,3 +1001,49 @@ def test_everyone_else_gets_the_summary_of_their_own_incidents(desk, busy):
     assert mine["average_hours"] == {"to_acknowledge": 2.0, "to_assign": 2.7, "to_resolve": 7.3}
     theirs = desk.call("other_employee", "GET", "/summary")[1]  # Projector, Door, Blind
     assert (theirs["total"], theirs["escalated_open"], theirs["by_status"]["BLOCKED"]) == (3, 1, 1)
+
+
+# --- found by review -------------------------------------------------------------------
+
+
+def test_a_resolved_incident_keeps_its_engineer_until_it_is_reopened_or_closed(desk):
+    resolved = desk.at("RESOLVED")  # feedback goes to the assignee, so it must stay who did the work
+    for engineer in ("other_engineer", None):
+        body = {"priority": "LOW", "assignee_id": engineer and desk.cast[engineer]["profile"]}
+        status, answer = desk.call("admin", "PATCH", f"/tickets/{resolved['id']}", body=body)
+        assert (status, answer["error"]["message"]) == (409, "Reopen a resolved incident before changing who works on it")
+    assert desk.see("admin", resolved) == resolved
+    assert desk.assign(resolved, priority="LOW")["priority"] == "LOW"  # the priority alone can still change
+
+
+def test_setting_only_the_priority_also_counts_as_acknowledging(desk):
+    triaged = desk.assign(desk.report(), None, priority="CRITICAL")
+    assert (triaged["acknowledged_at"], triaged["assigned_at"]) == (triaged["updated_at"], None)
+
+
+def test_leaving_the_assignee_out_is_refused_instead_of_unassigning(desk):
+    incident = desk.assign(desk.report())
+    status, body = desk.call("admin", "PATCH", f"/tickets/{incident['id']}", body={"priority": "LOW"})
+    assert (status, body["error"]["details"]) == (400, {"assignee_id": "Send the assignee, or null for nobody"})
+    assert desk.see("admin", incident) == incident
+
+
+@pytest.mark.parametrize(
+    "method, tail, body",
+    [("PATCH", "", {"priority": "LOW", "assignee_id": None}), ("POST", "/notes", {"body": "One more thing"})],
+)
+def test_an_incident_closed_a_moment_ago_takes_no_change_and_no_note(desk, incidents, monkeypatch, method, tail, body):
+    incident = desk.at("RESOLVED")
+    real = incidents.find
+
+    def read_then_see_it_closed(user, incident_id):
+        found = real(user, incident_id)
+        db.query("UPDATE incidents SET status = 'CLOSED' WHERE id = %s", (incident_id,), fetch=False)
+        return found
+
+    monkeypatch.setattr(incidents, "find", read_then_see_it_closed)
+    status, answer = desk.call("admin", method, f"/tickets/{incident['id']}{tail}", body=body)
+    assert (status, answer["error"]["code"]) == (409, "conflict")
+    after = row(incident)
+    assert (after["priority"], str(after["assignee_id"]), saved()["notes"]) == ("MEDIUM", incident["assignee_id"], 0)
+

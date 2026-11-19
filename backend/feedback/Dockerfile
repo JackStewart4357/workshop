@@ -9,4 +9,6 @@ COPY function.py server.py db.py http_utils.py security.py ./
 ENV PORT=8080
 EXPOSE 8080
 USER nobody
+# Python stops cleanly on SIGINT; without this a task stop waits out the kill timeout
+STOPSIGNAL SIGINT
 CMD ["python", "server.py"]

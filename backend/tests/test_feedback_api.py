@@ -44,8 +44,9 @@ def incident(reporter, assignee=None, status="RESOLVED", title="Leak"):
     building = db.query("INSERT INTO buildings (name, address) VALUES (%s, 'x') RETURNING id", (uuid.uuid4().hex,))
     return str(
         db.query(
-            "INSERT INTO incidents (title, description, status, blocked_reason, category_id, building_id, reporter_id, assignee_id) "
-            "VALUES (%s, 'Dripping', %s, 'Waiting for a part', (SELECT id FROM categories LIMIT 1), %s, %s, %s) RETURNING id",
+            "INSERT INTO incidents (title, description, status, blocked_reason, category_id, building_id, reporter_id, assignee_id, "
+            "resolved_at) VALUES (%s, 'Dripping', %s, 'Waiting for a part', (SELECT id FROM categories LIMIT 1), %s, %s, %s, now()) "
+            "RETURNING id",
             (title, status, building["id"], reporter["id"], assignee),
         )["id"]
     )
@@ -169,6 +170,23 @@ def test_there_is_nobody_to_rate_when_no_engineer_was_assigned(feedback, cast):
     assert invoke(feedback, "GET", f"/incidents/{unassigned}", token=cast["reporter"]["token"])[1]["can_give"] is False
     status, body = give(feedback, cast, incident_id=unassigned)
     assert (status, body["error"]["message"]) == (409, "No engineer worked on this incident")
+    assert saved() == []
+
+
+def test_there_is_nobody_to_rate_when_the_incident_was_closed_without_being_worked_on(feedback, cast):
+    untouched = incident(cast["reporter"], cast["profile"], "CLOSED")
+    db.query("UPDATE incidents SET resolved_at = NULL WHERE id = %s", (untouched,), fetch=False)  # Open straight to Closed
+    assert invoke(feedback, "GET", f"/incidents/{untouched}", token=cast["reporter"]["token"])[1]["can_give"] is False
+    status, body = give(feedback, cast, incident_id=untouched)
+    assert (status, body["error"]["message"]) == (409, "No engineer worked on this incident")
+    assert saved() == []
+
+
+def test_an_engineer_cannot_rate_their_own_work(feedback, cast):
+    own = incident(cast["engineer"], cast["profile"])  # reported by the engineer it was then assigned to
+    assert invoke(feedback, "GET", f"/incidents/{own}", token=cast["engineer"]["token"])[1]["can_give"] is False
+    status, body = give(feedback, cast, who="engineer", incident_id=own)
+    assert (status, body["error"]["message"]) == (409, "You cannot give feedback on your own work")
     assert saved() == []
 
 

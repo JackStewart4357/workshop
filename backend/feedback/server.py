@@ -13,6 +13,8 @@ from function import handler
 
 
 class Adapter(BaseHTTPRequestHandler):
+    timeout = 10  # seconds a silent client may hold the one thread before it is dropped
+
     def answer(self):
         url = urlsplit(self.path)
         length = int(self.headers.get("Content-Length") or 0)

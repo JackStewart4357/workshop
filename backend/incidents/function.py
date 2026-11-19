@@ -309,33 +309,37 @@ def create_incident(event, user):
 def update_incident(event, admin, incident_id):
     """Set the priority and who works on it; both are sent each time, the assignee may be
     null. Availability and capacity are shown to the admin, not enforced: they decide."""
+    body = json_body(event)
+    if "assignee_id" not in body:  # left out is not null: it must not quietly unassign
+        raise invalid("assignee_id", "Send the assignee, or null for nobody")
     fields = validate(
-        json_body(event),
-        {"priority": clean_choice("Priority", PRIORITIES), "assignee_id": optional(clean_uuid("Assignee"))},
+        body, {"priority": clean_choice("Priority", PRIORITIES), "assignee_id": optional(clean_uuid("Assignee"))}
     )
     incident = find(admin, incident_id)
-    if incident["status"] == "CLOSED":
-        raise ApiError(409, "conflict", "A closed incident cannot be changed")
     assignee = fields["assignee_id"] and uuid.UUID(fields["assignee_id"])
+    if incident["status"] == "RESOLVED" and assignee != incident["assignee_id"]:
+        # Feedback goes to the assignee, so whoever resolved it stays until it is reopened or closed
+        raise ApiError(409, "conflict", "Reopen a resolved incident before changing who works on it")
     newly_assigned = bool(assignee) and assignee != incident["assignee_id"]
     if newly_assigned and not query(
         "SELECT 1 AS found FROM engineer_profiles p JOIN users u ON u.id = p.user_id WHERE p.id = %s AND u.is_active",
         (assignee,),
     ):
         raise invalid("assignee_id", "Choose an active engineer")
-    query(
+    if not query(  # the status is checked by the UPDATE itself, so a close a moment ago still counts
         "UPDATE incidents SET priority = %s, assignee_id = %s, updated_at = now()"
-        + (", assigned_at = now()" + ACKNOWLEDGE if newly_assigned else "")
-        + " WHERE id = %s",
+        + ACKNOWLEDGE
+        + (", assigned_at = now()" if newly_assigned else "")
+        + " WHERE id = %s AND status <> 'CLOSED' RETURNING id",
         (fields["priority"], assignee, incident_id),
-        fetch=False,
-    )
+    ):
+        raise ApiError(409, "conflict", "A closed incident cannot be changed")
     return respond(200, {"incident": detail(admin, incident_id)})
 
 
 @protected("ADMIN")
 def delete_incident(_event, _admin, incident_id):
-    """Its notes, history and suggestions go with it (ON DELETE CASCADE in the schema)."""
+    """Its notes, history, suggestions and feedback go with it (ON DELETE CASCADE in the schema)."""
     if not query("DELETE FROM incidents WHERE id = %s RETURNING id", (incident_id,)):
         raise not_found()
     return respond(204)
@@ -398,8 +402,6 @@ def add_note(event, user, incident_id):
     staff = is_staff(user, incident)
     if fields["is_internal"] and not staff:
         raise ApiError(403, "access_denied", "You do not have permission to perform this action")
-    if incident["status"] == "CLOSED":
-        raise ApiError(409, "conflict", "A closed incident cannot take new notes")
     try:
         with transaction():
             note = query(
@@ -407,11 +409,13 @@ def add_note(event, user, incident_id):
                 "VALUES (%s, %s, %s, %s) RETURNING id",
                 (incident_id, user["id"], fields["body"], bool(fields["is_internal"])),
             )
-            query(
-                "UPDATE incidents SET updated_at = now()" + (ACKNOWLEDGE if staff else "") + " WHERE id = %s",
+            if not query(  # checked by the UPDATE itself, so a close a moment ago still counts
+                "UPDATE incidents SET updated_at = now()"
+                + (ACKNOWLEDGE if staff else "")
+                + " WHERE id = %s AND status <> 'CLOSED' RETURNING id",
                 (incident_id,),
-                fetch=False,
-            )
+            ):
+                raise ApiError(409, "conflict", "A closed incident cannot take new notes")
     except psycopg.errors.ForeignKeyViolation:  # the incident was removed a moment ago
         raise not_found() from None
     return respond(201, {"note": query(NOTES + "WHERE n.id = %s", (note["id"],))})
