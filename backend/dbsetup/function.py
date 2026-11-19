@@ -8,7 +8,7 @@ directly (aws lambda invoke) after every AWS deploy. HTTP requests are refused, 
 schema cannot be applied through the function's public URL.
 
 The demo data is opt-in: invoke with {"seed": true} (SEED_DEMO_DATA=true ./bin/deploy-backend.sh).
-It must be loaded before the app is first used; see the header of backend/_db/seed.sql.
+It can be loaded at any time and again; see the header of backend/_db/seed.sql.
 
 schema.sql and seed.sql beside this file are copies of the files in backend/_db, made by
 bin/sync-shared.sh.

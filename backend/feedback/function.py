@@ -12,7 +12,8 @@ Reached as /api/feedback/* (the local proxy and CloudFront both route here).
 Feedback is read by one person only: the engineer's manager (engineer_profiles.manager_id).
 No endpoint returns it to the engineer, to other admins, or back to its author.
 
-The same handler runs as a Lambda and, through server.py, in a container on ECS Fargate.
+The same handler runs as a Lambda and, through server.py, in a container on Kubernetes
+(see k8s.yaml and bin/deploy-minikube.sh).
 """
 
 import logging

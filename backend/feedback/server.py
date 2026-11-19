@@ -1,4 +1,4 @@
-"""Runs this service in a container (ECS Fargate) instead of as a Lambda.
+"""Runs this service in a container (Kubernetes, or ECS Fargate) instead of as a Lambda.
 
 A small web server that turns each HTTP request into the event a Lambda Function URL
 would send, calls the same handler(), and writes its answer back. One request at a time,
