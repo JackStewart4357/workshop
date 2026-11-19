@@ -53,6 +53,13 @@ const MOVES = {
   'RESOLVED>CLOSED': { label: 'Close', final: true },
 }
 const FINISHED = ['RESOLVED', 'CLOSED']
+// Escalating is not a step of the workflow, but it is asked for like a move that needs a reason
+const ESCALATE = {
+  to: 'ESCALATE',
+  label: 'Escalate',
+  ask: 'Why does this need escalating?',
+  missing: 'Say why it needs escalating',
+}
 
 // Everything the page shows. An incident the person may not see answers 404 exactly like
 // one that does not exist; that becomes `incident: null`, not a failure.
@@ -305,12 +312,25 @@ export default function IncidentDetailPage() {
 
   // Resolves with the failure only when the dialog can show it: a problem with the reason.
   async function move(to, reason) {
-    const failure = await change(() => incidents.changeStatus(incident.id, to, reason))
+    const failure = await change(() =>
+      to === ESCALATE.to
+        ? incidents.escalateIncident(incident.id, reason)
+        : incidents.changeStatus(incident.id, to, reason),
+    )
     if (!failure || failure.status === 400) return failure
     setError(failure.message) // e.g. someone else moved it first: show where it stands now
     retry()
     return null
   }
+
+  // "Escalated by Alice Johnson on 19 Nov 2026, 08:00"; the name is missing if that account is gone
+  const escalation = [
+    'Escalated',
+    incident.escalated_by && `by ${incident.escalated_by}`,
+    incident.escalated_at && `on ${formatDateTime(incident.escalated_at)}`,
+  ]
+    .filter(Boolean)
+    .join(' ')
 
   const details = [
     ['Category', incident.category],
@@ -342,6 +362,12 @@ export default function IncidentDetailPage() {
           <PriorityChip priority={incident.priority} />
           {incident.is_escalated && <Chip size="small" color="error" variant="outlined" label="Escalated" />}
         </Stack>
+        {incident.is_escalated && (
+          // A standing fact about the incident, not a message about something that just happened
+          <Alert severity="warning" role="note">
+            {escalation}: {incident.escalation_reason}
+          </Alert>
+        )}
         <Typography sx={{ whiteSpace: 'pre-wrap', my: 2 }}>{incident.description}</Typography>
         <Box component="dl" sx={{ display: 'grid', gap: 1.5, m: 0, gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(3, 1fr)' } }}>
           {details.map(([name, value]) => (
@@ -375,6 +401,11 @@ export default function IncidentDetailPage() {
               {option.label}
             </Button>
           ))}
+          {incident.can_escalate && (
+            <Button color="error" variant="outlined" disabled={busy} onClick={() => setMoving(ESCALATE)}>
+              {ESCALATE.label}
+            </Button>
+          )}
           {isAdmin && incident.status === 'OPEN' && !incident.assignee_id && (
             <Typography color="text.secondary">Assign an engineer to start work.</Typography>
           )}

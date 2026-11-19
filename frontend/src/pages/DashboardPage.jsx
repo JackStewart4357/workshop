@@ -13,6 +13,7 @@ import AddIcon from '@mui/icons-material/Add'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import StatTile from '../components/StatTile.jsx'
 import { PriorityChip, StatusChip } from '../components/StatusChip.jsx'
+import StuckReasons from '../components/StuckReasons.jsx'
 import { useAuth } from '../context/AuthContext.js'
 import { PRIORITIES, PRIORITY_LABELS, STATUSES, getSummary, listIncidents } from '../services/incidentsService.js'
 import { formatDate, locationOf } from '../utils/format.js'
@@ -256,8 +257,40 @@ function AdminDashboard({ summary }) {
           caption="open, no engineer yet"
           to="/incidents?assignee=none"
         />
-        <StatTile label="Escalated" value={summary.escalated_open} caption="still open" />
+        <StatTile
+          label="Escalated"
+          value={summary.escalated_open}
+          caption="still open"
+          to="/incidents?escalated=true"
+        />
       </Box>
+      <Section title="Needs attention">
+        {/* Open incidents that are blocked or escalated, the longest without an update first, each with its reason */}
+        {summary.needs_attention.length === 0 && (
+          <Typography color="text.secondary">Nothing is blocked or escalated.</Typography>
+        )}
+        <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
+          {summary.needs_attention.map((incident) => (
+            <Box key={incident.id} component="li" sx={{ py: 1, borderTop: 1, borderColor: 'divider' }}>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
+                <Link
+                  component={RouterLink}
+                  to={`/incidents/${incident.id}`}
+                  sx={{ flexGrow: 1, minWidth: 0, overflowWrap: 'anywhere' }}
+                >
+                  {incident.title}
+                </Link>
+                <StatusChip status={incident.status} />
+                {incident.is_escalated && <Chip size="small" color="error" variant="outlined" label="Escalated" />}
+                <Typography variant="body2" color="text.secondary">
+                  {incident.assignee ?? 'Unassigned'}
+                </Typography>
+              </Box>
+              <StuckReasons incident={incident} />
+            </Box>
+          ))}
+        </Box>
+      </Section>
       <Section title="Incidents by priority">
         <PriorityBars counts={summary.by_priority} to={(priority) => `/incidents?priority=${priority}`} />
       </Section>

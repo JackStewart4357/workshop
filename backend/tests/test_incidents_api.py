@@ -31,7 +31,7 @@ ROUTE_TO = {
 }
 LIST_KEYS = {
     "id", "title", "status", "priority", "category", "building", "floor_level", "seat", "reporter", "assignee",
-    "assignee_id", "is_escalated", "created_at", "updated_at",
+    "assignee_id", "is_escalated", "blocked_reason", "escalation_reason", "created_at", "updated_at",
 }  # fmt: skip
 DENIED = "You do not have permission to perform this action"
 
@@ -195,6 +195,7 @@ ENDPOINTS = [
     ("DELETE", f"/tickets/{MISSING}"),
     ("POST", f"/tickets/{MISSING}/status"),
     ("POST", f"/tickets/{MISSING}/notes"),
+    ("POST", f"/tickets/{MISSING}/escalate"),
 ]
 
 
@@ -267,6 +268,9 @@ def test_reporting_returns_the_whole_incident_with_its_first_history_row(desk):
         "updated_at": incident["created_at"],
         "description": "Drips all night",
         "blocked_reason": None,
+        "escalation_reason": None,
+        "escalated_at": None,
+        "escalated_by": None,
         "category_id": site["category"],
         "building_id": site["building"],
         "floor_id": site["floor"],
@@ -288,6 +292,7 @@ def test_reporting_returns_the_whole_incident_with_its_first_history_row(desk):
         ],
         "next_statuses": [],
         "is_staff": False,
+        "can_escalate": True,
     }
     assert incident["created_at"][10] == "T"  # ISO 8601, which every browser's Date reads
     assert desk.see("reporter", incident) == incident
@@ -914,6 +919,7 @@ EMPTY = {
     "by_assignee": [],
     "by_category": [],
     "by_location": {"buildings": [], "floors": [], "seats": []},
+    "needs_attention": [],
     "average_hours": {"to_acknowledge": None, "to_assign": None, "to_resolve": None},
 }
 
@@ -973,7 +979,20 @@ def busy(desk):
 
 
 def test_the_admin_summary_counts_everything_and_shows_each_engineers_load(desk, busy):
-    assert desk.call("admin", "GET", "/summary") == (
+    status, body = desk.call("admin", "GET", "/summary")
+    # Door is blocked and escalated; Blind is escalated too, but closed, so it needs nobody's attention
+    assert [{key: value for key, value in row.items() if key != "id"} for row in body.pop("needs_attention")] == [
+        {
+            "title": "Door",
+            "status": "BLOCKED",
+            "priority": "MEDIUM",
+            "is_escalated": True,
+            "blocked_reason": "Waiting for a key",
+            "escalation_reason": "Urgent",
+            "assignee": desk.cast["other_engineer"]["name"],
+        }
+    ]
+    assert (status, body) == (
         200,
         {
             "total": 6,
@@ -1004,6 +1023,7 @@ def test_everyone_else_gets_the_summary_of_their_own_incidents(desk, busy):
         "by_assignee": [],
         "by_category": [],  # the site-wide rankings are for admins
         "by_location": {"buildings": [], "floors": [], "seats": []},
+        "needs_attention": [],
         "average_hours": {"to_acknowledge": 1.5, "to_assign": 2.0, "to_resolve": 10.0},
     }
     mine = desk.call("engineer", "GET", "/summary")[1]  # Router, Lights, Projector
@@ -1059,6 +1079,80 @@ def test_the_rankings_show_the_five_worst_places_and_break_ties_by_name(desk):
     assert [(b["building"], b["count"]) for b in buildings] == [
         ("Headquarters", 2), ("Alpha", 1), ("Beta", 1), ("Delta", 1), ("Gamma", 1),
     ]
+
+
+# --- escalating ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("who", ["reporter", "engineer", "admin"])
+def test_anyone_who_can_see_an_open_incident_can_escalate_it_saying_why(desk, who):
+    incident = desk.assign(desk.report())
+    status, body = desk.call(who, "POST", f"/api/incidents/tickets/{incident['id']}/escalate", body={"reason": "  Third time this week "})
+    escalated = body["incident"]
+    assert status == 200
+    assert (escalated["is_escalated"], escalated["escalation_reason"], escalated["escalated_by"]) == (
+        True,
+        "Third time this week",
+        desk.cast[who]["name"],
+    )
+    assert escalated["escalated_at"] == escalated["updated_at"] > incident["updated_at"]
+    assert (incident["can_escalate"], escalated["can_escalate"]) == (True, False)
+    assert (escalated["status"], escalated["history"]) == (incident["status"], incident["history"])  # not a workflow move
+    # ...and the list says why, without opening the incident
+    listed = desk.call("admin", "GET", "/tickets")[1]["incidents"][0]
+    assert (listed["is_escalated"], listed["escalation_reason"]) == (True, "Third time this week")
+
+
+@pytest.mark.parametrize(
+    "reason, message",
+    [(None, "Say why it needs escalating"), ("   ", "Say why it needs escalating"), ("r" * 501, "Reason must be at most 500 characters")],
+)
+def test_escalating_needs_a_reason(desk, reason, message):
+    incident = desk.report()
+    status, body = desk.call("reporter", "POST", f"/tickets/{incident['id']}/escalate", body={"reason": reason})
+    assert (status, body["error"]["details"]) == (400, {"reason": message})
+    assert desk.see("reporter", incident) == incident
+
+
+def test_an_incident_is_escalated_once_and_only_while_it_still_needs_work(desk):
+    incident = desk.report()
+    first = desk.call("reporter", "POST", f"/tickets/{incident['id']}/escalate", body={"reason": "First"})[1]["incident"]
+    status, body = desk.call("admin", "POST", f"/tickets/{incident['id']}/escalate", body={"reason": "Second"})
+    assert (status, body["error"]["message"]) == (409, "This incident is already escalated")
+    assert desk.see("admin", incident)["escalation_reason"] == first["escalation_reason"] == "First"
+
+    for status_name in ("RESOLVED", "CLOSED"):
+        done = desk.at(status_name)
+        status, body = desk.call("reporter", "POST", f"/tickets/{done['id']}/escalate", body={"reason": "Too late"})
+        assert (status, body["error"]["message"]) == (409, "A resolved or closed incident cannot be escalated")
+        after = desk.see("admin", done)
+        assert (after["is_escalated"], after["can_escalate"]) == (False, False)
+
+
+def test_an_incident_someone_may_not_see_cannot_be_escalated_by_them(desk):
+    incident = desk.report()
+    status, body = desk.call("other_employee", "POST", f"/tickets/{incident['id']}/escalate", body={"reason": "Mine too"})
+    assert (status, body["error"]["message"]) == (404, "Incident not found")
+    assert desk.see("admin", incident)["is_escalated"] is False
+
+
+def test_the_list_can_be_narrowed_to_escalated_incidents(desk):
+    desk.report(title="Quiet")
+    loud = desk.report(title="Loud")
+    desk.call("reporter", "POST", f"/tickets/{loud['id']}/escalate", body={"reason": "Flooding"})
+    assert desk.titles("admin", escalated="true") == ["Loud"]
+    assert desk.titles("admin", escalated="") == ["Loud", "Quiet"]  # blank means not asked for
+    status, body = desk.call("admin", "GET", "/tickets", query={"escalated": "yes"})
+    assert (status, body["error"]["details"]) == (400, {"escalated": "Escalated must be one of: true"})
+
+
+def test_the_admin_summary_lists_at_most_ten_needing_attention_longest_waiting_first(desk):
+    for number in range(12):
+        incident = desk.report(title=f"Flood {number:02}")
+        desk.call("reporter", "POST", f"/tickets/{incident['id']}/escalate", body={"reason": "Wet"})
+        db.query("UPDATE incidents SET updated_at = now() - %s * interval '1 hour' WHERE id = %s", (number, incident["id"]), fetch=False)
+    waiting = desk.call("admin", "GET", "/summary")[1]["needs_attention"]
+    assert [row["title"] for row in waiting] == [f"Flood {number:02}" for number in range(11, 1, -1)]
 
 
 # --- found by review -------------------------------------------------------------------

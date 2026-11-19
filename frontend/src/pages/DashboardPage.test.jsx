@@ -16,6 +16,28 @@ beforeEach(() => {
     by_priority: { LOW: 2, MEDIUM: 6, HIGH: 3, CRITICAL: 1 },
     unassigned_open: 2,
     escalated_open: 0,
+    needs_attention: [
+      {
+        id: 'i-7',
+        title: 'Lift stuck on floor 2',
+        status: 'BLOCKED',
+        priority: 'CRITICAL',
+        is_escalated: true,
+        blocked_reason: 'Waiting for the contractor',
+        escalation_reason: 'People cannot reach their desks',
+        assignee: 'Marco Rossi',
+      },
+      {
+        id: 'i-4',
+        title: 'No heating in the annex',
+        status: 'OPEN',
+        priority: 'HIGH',
+        is_escalated: true,
+        blocked_reason: null,
+        escalation_reason: 'Reported three times',
+        assignee: null,
+      },
+    ],
     by_assignee: [
       { assignee_id: 'e-3', assignee: 'Lena Fischer', is_available: false, max_open_tickets: 3, open: 4 },
       { assignee_id: 'e-2', assignee: 'Marco Rossi', is_available: true, max_open_tickets: 4, open: 4 },
@@ -90,12 +112,31 @@ describe('DashboardPage', () => {
       expect(href('Resolved 2')).toBe('/incidents?status=RESOLVED')
       expect(href('Closed 0')).toBe('/incidents?status=CLOSED')
       expect(href('Unassigned 2 open, no engineer yet')).toBe('/incidents?assignee=none')
-      // Escalated has no list of its own to open
-      expect(screen.getByText('Escalated').parentElement).toHaveTextContent('Escalated0still open')
-      expect(screen.queryByRole('link', { name: /escalated/i })).not.toBeInTheDocument()
+      expect(href('Escalated 0 still open')).toBe('/incidents?escalated=true')
 
       expect(calls.map((call) => call.path)).toEqual([`${API}/summary`]) // an admin's page needs no list
       expect(screen.queryByRole('link', { name: 'Report incident' })).not.toBeInTheDocument()
+    })
+
+    it('lists what is blocked or escalated, in the order the API sent it, each with who has it and why', async () => {
+      await renderDashboard(USERS.admin)
+      expect(titles('Needs attention')).toEqual(['Lift stuck on floor 2', 'No heating in the annex'])
+      const [lift, heating] = section('Needs attention').getAllByRole('listitem')
+      expect(within(lift).getByRole('link')).toHaveAttribute('href', '/incidents/i-7')
+      expect(lift).toHaveTextContent(
+        'Lift stuck on floor 2BlockedEscalatedMarco RossiBlocked: Waiting for the contractorEscalated: People cannot reach their desks',
+      )
+      expect(heating).toHaveTextContent('No heating in the annexOpenEscalatedUnassignedEscalated: Reported three times')
+      expect(within(heating).queryByText(/^Blocked:/)).not.toBeInTheDocument()
+      expect(section('Needs attention').queryByText('Nothing is blocked or escalated.')).not.toBeInTheDocument()
+    })
+
+    it('leaves the Escalated chip off an incident that is only blocked', async () => {
+      summary.needs_attention = [{ ...summary.needs_attention[0], is_escalated: false, escalation_reason: null }]
+      await renderDashboard(USERS.admin)
+      expect(section('Needs attention').getByRole('listitem')).toHaveTextContent(
+        'Lift stuck on floor 2BlockedMarco RossiBlocked: Waiting for the contractor',
+      )
     })
 
     it('shows incidents by priority, most urgent first, as bars on one scale with their numbers', async () => {
@@ -184,12 +225,15 @@ describe('DashboardPage', () => {
         by_priority: { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 },
         unassigned_open: 0,
         escalated_open: 0,
+        needs_attention: [],
         by_assignee: [],
         by_category: [],
         by_location: { buildings: [], floors: [], seats: [] },
         average_hours: { to_acknowledge: null, to_assign: null, to_resolve: null },
       }
       await renderDashboard(USERS.admin)
+      expect(section('Needs attention').getByText('Nothing is blocked or escalated.')).toBeInTheDocument()
+      expect(section('Needs attention').queryAllByRole('listitem')).toEqual([])
       expect(section('Most common categories').getByText('No incidents have been reported yet.')).toBeInTheDocument()
       expect(section('Where incidents recur').getByText('No incident names one of the seats yet.')).toBeInTheDocument()
       expect(href('All incidents 0')).toBe('/incidents')

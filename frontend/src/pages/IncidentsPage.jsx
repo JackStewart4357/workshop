@@ -17,6 +17,7 @@ import AddIcon from '@mui/icons-material/Add'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import { PriorityChip, StatusChip } from '../components/StatusChip.jsx'
+import StuckReasons from '../components/StuckReasons.jsx'
 import { useAuth } from '../context/AuthContext.js'
 import { ROLES } from '../navigation.js'
 import { listEngineers } from '../services/engineersService.js'
@@ -27,7 +28,7 @@ import { useServerList } from '../utils/useServerList.js'
 
 // The filters, by the names the API gives them. They live in the page address, so a
 // reload, the Back button and a shared link all show the same list.
-const FILTERS = ['q', 'status', 'priority', 'category_id', 'building_id', 'assignee']
+const FILTERS = ['q', 'status', 'priority', 'category_id', 'building_id', 'assignee', 'escalated']
 const SEARCH_PAUSE = 400 // milliseconds without typing before a search is sent
 const LIST_LIMIT = 200 // the most the API returns
 
@@ -232,6 +233,15 @@ export default function IncidentsPage() {
             }
           />
         )}
+        <FormControlLabel
+          label="Escalated only"
+          control={
+            <Switch
+              checked={filters.escalated === 'true'}
+              onChange={(event) => setFilter('escalated', event.target.checked ? 'true' : '')}
+            />
+          }
+        />
         {filtered && (
           <Button onClick={() => setParams({}, { replace: true })} sx={{ justifySelf: 'start' }}>
             Clear filters
@@ -274,6 +284,7 @@ export default function IncidentsPage() {
                       <PriorityChip priority={incident.priority} />
                       {incident.is_escalated && <Chip size="small" color="error" variant="outlined" label="Escalated" />}
                     </Stack>
+                    <StuckReasons incident={incident} />
                   </Box>
                   <Box>
                     <Typography>{incident.category}</Typography>

@@ -33,6 +33,8 @@ const leak = {
   assignee: 'Priya Sharma',
   assignee_id: 'e-1',
   is_escalated: true,
+  escalation_reason: 'Third leak this month',
+  blocked_reason: null,
   created_at: '2026-11-18T09:15:00+00:00',
   updated_at: '2026-11-18T10:00:00+00:00',
 }
@@ -49,6 +51,7 @@ const wifi = {
   assignee: null,
   assignee_id: null,
   is_escalated: false,
+  escalation_reason: null,
 }
 
 // What the fake API answers a list request with; a test replaces it to change the list.
@@ -91,6 +94,8 @@ describe('IncidentsPage', () => {
     expect(first.getByText('In progress')).toBeInTheDocument()
     expect(first.getByText('High priority')).toBeInTheDocument()
     expect(first.getByText('Escalated')).toBeInTheDocument()
+    expect(first.getByText('Escalated: Third leak this month')).toBeInTheDocument()
+    expect(first.queryByText(/^Blocked:/)).not.toBeInTheDocument()
     expect(first.getByText('Plumbing')).toBeInTheDocument()
     expect(first.getByText('Headquarters, Floor 2, seat 2F-A14')).toBeInTheDocument()
     expect(first.getByText('Assigned to Priya Sharma')).toBeInTheDocument()
@@ -100,6 +105,7 @@ describe('IncidentsPage', () => {
     expect(second.getByText('Open')).toBeInTheDocument()
     expect(second.getByText('Low priority')).toBeInTheDocument()
     expect(second.queryByText('Escalated')).not.toBeInTheDocument()
+    expect(second.queryByText(/^(Blocked|Escalated):/)).not.toBeInTheDocument()
     expect(second.getByText('Riverside Annex')).toBeInTheDocument()
     expect(second.getByText('Unassigned')).toBeInTheDocument()
 
@@ -225,6 +231,35 @@ describe('IncidentsPage', () => {
     expect(asked(calls)).toHaveLength(2)
   })
 
+  it('says under a blocked incident what is blocking it', async () => {
+    found = [{ ...wifi, status: 'BLOCKED', blocked_reason: 'Waiting for the provider' }]
+    await renderPage()
+    const row = within(screen.getByRole('link', { name: /Wi-Fi keeps dropping/ }))
+    expect(row.getByText('Blocked: Waiting for the provider')).toBeInTheDocument()
+  })
+
+  it.each([USERS.employee, USERS.engineer, USERS.admin])(
+    'lets $role switch to the escalated incidents only, kept in the address like the other filters',
+    async (who) => {
+      const { calls, user } = await renderPage({ user: who })
+      const escalated = screen.getByRole('switch', { name: 'Escalated only' })
+      expect(escalated).not.toBeChecked()
+      await user.click(escalated)
+      await waitFor(() => expect(asked(calls)).toEqual([{}, { escalated: 'true' }]))
+      expect(escalated).toBeChecked()
+
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+      await waitFor(() => expect(asked(calls)).toEqual([{}, { escalated: 'true' }, {}]))
+      expect(screen.getByRole('switch', { name: 'Escalated only' })).not.toBeChecked()
+    },
+  )
+
+  it('starts with "Escalated only" on when the address says so, as the dashboard link does', async () => {
+    const { calls } = await renderPage({ route: '/incidents?escalated=true' })
+    expect(asked(calls)).toEqual([{ escalated: 'true' }])
+    expect(screen.getByRole('switch', { name: 'Escalated only' })).toBeChecked()
+  })
+
   it('lets an admin filter by any engineer, by nobody, or by anyone', async () => {
     const { calls, user } = await renderPage({ user: USERS.admin })
     await user.click(filter('Assignee'))
@@ -239,7 +274,7 @@ describe('IncidentsPage', () => {
     await choose(user, 'Assignee', 'Anyone')
 
     await waitFor(() => expect(asked(calls)).toEqual([{}, { assignee: 'e-2' }, { assignee: 'none' }, {}]))
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Assigned to me' })).not.toBeInTheDocument()
   })
 
   it('lets an engineer switch to the incidents assigned to them', async () => {
@@ -259,7 +294,7 @@ describe('IncidentsPage', () => {
   it('offers an employee no assignee filter, and never asks for the engineers', async () => {
     const { calls } = await renderPage() // the fake API has no engineers route: asking would fail the test
     expect(screen.queryByRole('combobox', { name: /^Assignee/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Assigned to me' })).not.toBeInTheDocument()
     expect(calls.map((call) => call.path).sort()).toEqual(['/api/facilities/buildings', '/api/incidents/categories', TICKETS])
   })
 })

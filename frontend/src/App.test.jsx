@@ -15,6 +15,7 @@ const EMPTY_DASHBOARD = {
       by_priority: { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 },
       unassigned_open: 0,
       escalated_open: 0,
+      needs_attention: [],
       by_assignee: [],
       by_category: [],
       by_location: { buildings: [], floors: [], seats: [] },

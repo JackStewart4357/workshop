@@ -27,8 +27,8 @@ export async function listCategories() {
 
 /**
  * The incidents the signed-in person may see, newest first (at most 200).
- * filters: { status, priority, category_id, building_id, assignee ('none', 'me' or a profile id), q };
- * empty ones are left out.
+ * filters: { status, priority, category_id, building_id, assignee ('none', 'me' or a profile id), q,
+ * escalated ('true' for the escalated ones only) }; empty ones are left out.
  */
 export async function listIncidents(filters = {}) {
   const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString()
@@ -52,6 +52,10 @@ export const updateIncident = (id, priority, assigneeId) =>
 /** Move an incident along the workflow. A reason is needed to block it and to reopen it. */
 export const changeStatus = (id, status, reason) =>
   api(`${BASE}/tickets/${id}/status`, { method: 'POST', body: { status, reason } })
+
+/** Raise an incident that needs more attention than it is getting. The reason is required. */
+export const escalateIncident = (id, reason) =>
+  api(`${BASE}/tickets/${id}/escalate`, { method: 'POST', body: { reason } })
 
 export const addNote = (id, body, isInternal = false) =>
   api(`${BASE}/tickets/${id}/notes`, { method: 'POST', body: { body, is_internal: isInternal } })

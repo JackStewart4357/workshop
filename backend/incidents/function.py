@@ -13,6 +13,7 @@ Reached as /api/incidents/* (the local proxy and CloudFront both route here).
     DELETE /tickets/{incident_id}           remove an incident                         (admin)
     POST   /tickets/{incident_id}/status    move an incident along the workflow
     POST   /tickets/{incident_id}/notes     add a note
+    POST   /tickets/{incident_id}/escalate  flag an open incident for attention, saying why
 
 Who sees what: an admin sees every incident; anyone else sees the ones they reported and,
 for an engineer, the ones assigned to them. An incident the caller may not see answers
@@ -64,17 +65,19 @@ ACKNOWLEDGE = ", acknowledged_at = coalesce(acknowledged_at, now())"  # the firs
 COLUMNS = (
     "i.id, i.title, i.status, i.priority, c.name AS category, b.name AS building, f.level AS floor_level, "
     "s.code AS seat, r.full_name AS reporter, au.full_name AS assignee, i.assignee_id, i.is_escalated, "
-    "i.created_at, i.updated_at"
+    "i.blocked_reason, i.escalation_reason, i.created_at, i.updated_at"
 )
 MORE = (
-    ", i.description, i.blocked_reason, i.category_id, i.building_id, i.floor_id, i.seat_id, i.reporter_id, "
-    "i.acknowledged_at, i.assigned_at, i.resolved_at, i.closed_at, ae.user_id AS assignee_user_id"
+    ", i.description, i.category_id, i.building_id, i.floor_id, i.seat_id, i.reporter_id, i.acknowledged_at, "
+    "i.assigned_at, i.resolved_at, i.closed_at, i.escalated_at, eu.full_name AS escalated_by, "
+    "ae.user_id AS assignee_user_id"
 )
 FROM = (
     " FROM incidents i JOIN categories c ON c.id = i.category_id JOIN buildings b ON b.id = i.building_id "
     "LEFT JOIN floors f ON f.id = i.floor_id LEFT JOIN seats s ON s.id = i.seat_id "
     "JOIN users r ON r.id = i.reporter_id "
     "LEFT JOIN engineer_profiles ae ON ae.id = i.assignee_id LEFT JOIN users au ON au.id = ae.user_id "
+    "LEFT JOIN users eu ON eu.id = i.escalated_by "
 )
 NOTES = (
     "SELECT n.id, n.body, n.is_internal, u.full_name AS author, u.role AS author_role, n.created_at "
@@ -110,6 +113,7 @@ FILTERS = {
     "category_id": optional(clean_uuid("Category")),
     "building_id": optional(clean_uuid("Building")),
     "assignee": optional(clean_assignee),
+    "escalated": optional(clean_choice("Escalated", ("true",))),
     "q": optional(clean_text("Search", 100)),
 }
 
@@ -184,6 +188,7 @@ def detail(user, incident_id):
         to for to in WORKFLOW[incident["status"]] if may_move(user, incident, to) and not needs_assignee(incident, to)
     ]
     incident["is_staff"] = staff  # tells the screen whether to offer internal notes
+    incident["can_escalate"] = not incident["is_escalated"] and incident["status"] not in ("RESOLVED", "CLOSED")
     del incident["assignee_user_id"]  # only needed for the checks above
     return incident
 
@@ -219,6 +224,8 @@ def list_incidents(event, user):
     elif filters["assignee"]:
         where += " AND i.assignee_id = %s"
         params.append(filters["assignee"])
+    if filters["escalated"]:
+        where += " AND i.is_escalated"
     if filters["q"]:
         # % and _ mean "anything" to ILIKE: escaped, so a search for "50%" finds just that
         pattern = "%" + re.sub(r"([\\%_])", r"\\\1", filters["q"]) + "%"
@@ -253,7 +260,13 @@ def summary(_event, user):
         params,
     )
     by_assignee, by_category, by_location = [], [], {"buildings": [], "floors": [], "seats": []}
+    needs_attention = []
     if user["role"] == "ADMIN":  # the questions about the whole site
+        needs_attention = query_all(  # blocked or escalated and still open: the longest-waiting first, with why
+            "SELECT i.id, i.title, i.status, i.priority, i.is_escalated, i.blocked_reason, i.escalation_reason, "
+            f"au.full_name AS assignee{FROM} WHERE {STILL_OPEN} AND (i.status = 'BLOCKED' OR i.is_escalated) "
+            "ORDER BY i.updated_at, i.id LIMIT 10"
+        )
         by_assignee = query_all(  # how work is spread across the engineers
             "SELECT p.id AS assignee_id, u.full_name AS assignee, p.is_available, p.max_open_tickets, "
             f"(SELECT count(*) FROM incidents i WHERE i.assignee_id = p.id AND {STILL_OPEN}) AS open "
@@ -288,6 +301,7 @@ def summary(_event, user):
             "by_assignee": by_assignee,
             "by_category": by_category,
             "by_location": by_location,
+            "needs_attention": needs_attention,
             "average_hours": {key: row[key] for key in ("to_acknowledge", "to_assign", "to_resolve")},
         },
     )
@@ -441,6 +455,27 @@ def add_note(event, user, incident_id):
     return respond(201, {"note": query(NOTES + "WHERE n.id = %s", (note["id"],))})
 
 
+@protected()
+def escalate(event, user, incident_id):
+    """Anyone who can see an incident that still needs work can flag it for attention, once,
+    saying why. It stays flagged: the reason is part of the incident's record."""
+    fields = validate(json_body(event), {"reason": optional(clean_text("Reason", 500))})
+    if not fields["reason"]:
+        raise invalid("reason", "Say why it needs escalating")
+    incident = find(user, incident_id)
+    if incident["is_escalated"]:
+        raise ApiError(409, "conflict", "This incident is already escalated")
+    if incident["status"] in ("RESOLVED", "CLOSED"):
+        raise ApiError(409, "conflict", "A resolved or closed incident cannot be escalated")
+    query(
+        "UPDATE incidents SET is_escalated = TRUE, escalation_reason = %s, escalated_by = %s, escalated_at = now(), "
+        "updated_at = now() WHERE id = %s AND NOT is_escalated",
+        (fields["reason"], user["id"], incident_id),
+        fetch=False,
+    )
+    return respond(200, {"incident": detail(user, incident_id)})
+
+
 ROUTES = {
     ("GET", "/"): health,
     ("GET", "/categories"): list_categories,
@@ -452,6 +487,7 @@ ROUTES = {
     ("DELETE", "/tickets/{incident_id}"): delete_incident,
     ("POST", "/tickets/{incident_id}/status"): change_status,
     ("POST", "/tickets/{incident_id}/notes"): add_note,
+    ("POST", "/tickets/{incident_id}/escalate"): escalate,
 }
 
 

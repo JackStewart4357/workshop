@@ -40,6 +40,8 @@ describe('incidentsService', () => {
     await expect(incidents.listIncidents()).resolves.toEqual(found)
     await incidents.listIncidents({ status: 'OPEN', priority: '', q: 'tap & sink', assignee: 'me', building_id: undefined })
     expect(calls.map((call) => call.query)).toEqual([undefined, { status: 'OPEN', q: 'tap & sink', assignee: 'me' }])
+    await incidents.listIncidents({ escalated: 'true', status: '' })
+    expect(calls.at(-1).query).toEqual({ escalated: 'true' })
   })
 
   it('reports an incident and hands back what was saved', async () => {
@@ -56,6 +58,7 @@ describe('incidentsService', () => {
       [`PATCH ${API}/tickets/i-1`]: () => ({ body: {} }),
       [`POST ${API}/tickets/i-1/status`]: () => ({ body: {} }),
       [`POST ${API}/tickets/i-1/notes`]: () => ({ status: 201, body: {} }),
+      [`POST ${API}/tickets/i-1/escalate`]: () => ({ body: {} }),
       [`DELETE ${API}/tickets/i-1`]: () => ({ status: 204 }),
     })
     await incidents.updateIncident('i-1', 'HIGH', 'e-1')
@@ -65,6 +68,8 @@ describe('incidentsService', () => {
     await incidents.addNote('i-1', 'Ordered the part', true)
     await incidents.addNote('i-1', 'Thanks')
     await incidents.removeIncident('i-1')
+    await incidents.escalateIncident('i-1', 'Nobody has replied')
+    expect(calls.at(-1).path).toBe(`${API}/tickets/i-1/escalate`)
     expect(calls.map((call) => [call.method, call.body])).toEqual([
       ['PATCH', { priority: 'HIGH', assignee_id: 'e-1' }],
       ['PATCH', { priority: 'LOW', assignee_id: null }],
@@ -73,6 +78,7 @@ describe('incidentsService', () => {
       ['POST', { body: 'Ordered the part', is_internal: true }],
       ['POST', { body: 'Thanks', is_internal: false }],
       ['DELETE', undefined],
+      ['POST', { reason: 'Nobody has replied' }],
     ])
   })
 })

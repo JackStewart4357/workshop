@@ -40,6 +40,10 @@ beforeEach(() => {
     assignee: 'Priya Sharma',
     assignee_id: 'e-1',
     is_escalated: false,
+    escalation_reason: null,
+    escalated_at: null,
+    escalated_by: null,
+    can_escalate: false,
     blocked_reason: null,
     created_at: '2026-11-18T09:15:00+00:00',
     updated_at: '2026-11-18T11:30:00+00:00',
@@ -73,6 +77,18 @@ const api = {
       blocked_reason: body.status === 'BLOCKED' ? body.reason : null,
       history: [...incident.history, step],
       next_statuses: [],
+      updated_at: LATER,
+    }
+    return { body: { incident } }
+  },
+  [`POST ${TICKET}/escalate`]: ({ body }) => {
+    incident = {
+      ...incident,
+      is_escalated: true,
+      escalation_reason: body.reason,
+      escalated_at: LATER,
+      escalated_by: 'Priya Sharma',
+      can_escalate: false,
       updated_at: LATER,
     }
     return { body: { incident } }
@@ -157,6 +173,93 @@ describe('IncidentDetailPage', () => {
     await renderPage()
     expect(screen.getByText('Escalated')).toBeInTheDocument()
     expect(screen.getByText('Unassigned')).toBeInTheDocument()
+  })
+
+  it('says who escalated an incident, when and why, and offers no second escalation', async () => {
+    const escalated = { is_escalated: true, escalation_reason: 'Third leak this month', escalated_at: LATER, can_escalate: false }
+    incident = { ...incident, ...escalated, escalated_by: 'Alice Johnson' }
+    await renderPage()
+    expect(screen.getByRole('note')).toHaveTextContent(
+      `Escalated by Alice Johnson on ${formatDateTime(LATER)}: Third leak this month`,
+    )
+    expect(screen.queryByRole('button', { name: 'Escalate' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument() // a standing note, not an error
+  })
+
+  it('still says when and why if the person who escalated it is no longer known', async () => {
+    incident = { ...incident, is_escalated: true, escalation_reason: 'No reply', escalated_at: LATER, escalated_by: null }
+    await renderPage()
+    expect(screen.getByRole('note')).toHaveTextContent(`Escalated on ${formatDateTime(LATER)}: No reply`)
+  })
+
+  it('escalates an incident only with a reason, then shows it as escalated', async () => {
+    incident = { ...incident, can_escalate: true }
+    const { calls, user } = await renderPage({ user: USERS.employee })
+    expect(screen.queryByRole('note')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Escalate' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Escalate?' }))
+
+    await user.click(dialog.getByRole('button', { name: 'Escalate' }))
+    expect(dialog.getByText('Say why it needs escalating')).toBeInTheDocument()
+    await write(user, dialog.getByLabelText(/why does this need escalating/i), 'x'.repeat(501))
+    await user.click(dialog.getByRole('button', { name: 'Escalate' }))
+    expect(dialog.getByText('Reason must be at most 500 characters')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await user.clear(dialog.getByLabelText(/why does this need escalating/i))
+    await write(user, dialog.getByLabelText(/why does this need escalating/i), '  Nobody has replied in a week ')
+    await user.click(dialog.getByRole('button', { name: 'Escalate' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(writes(calls)).toEqual([
+      { method: 'POST', path: `${TICKET}/escalate`, token: undefined, body: { reason: 'Nobody has replied in a week' } },
+    ])
+    expect(screen.getByRole('note')).toHaveTextContent(
+      `Escalated by Priya Sharma on ${formatDateTime(LATER)}: Nobody has replied in a week`,
+    )
+    expect(screen.getByText('Escalated')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Escalate' })).not.toBeInTheDocument()
+  })
+
+  it('shows what the API says about the escalation reason under the field', async () => {
+    incident = { ...incident, can_escalate: true }
+    const { user } = await renderPage({
+      routes: {
+        [`POST ${TICKET}/escalate`]: () =>
+          apiError(400, 'validation_error', 'Some fields are invalid', { reason: 'Say why it needs escalating' }),
+      },
+    })
+    await user.click(screen.getByRole('button', { name: 'Escalate' }))
+    const dialog = within(screen.getByRole('dialog'))
+    await write(user, dialog.getByLabelText(/why does this need escalating/i), 'Urgent')
+    await user.click(dialog.getByRole('button', { name: 'Escalate' }))
+
+    expect(await dialog.findByText('Say why it needs escalating')).toBeInTheDocument()
+    expect(dialog.getByLabelText(/why does this need escalating/i)).toHaveValue('Urgent')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('when the incident was escalated or finished in the meantime, says so and shows where it stands now', async () => {
+    incident = { ...incident, can_escalate: true }
+    const { calls, user } = await renderPage({
+      routes: {
+        [`POST ${TICKET}/escalate`]: () => {
+          // what someone else did a moment ago
+          incident = { ...incident, is_escalated: true, escalation_reason: 'Theirs', escalated_at: LATER, can_escalate: false }
+          return apiError(409, 'conflict', 'This incident is already escalated')
+        },
+      },
+    })
+    await user.click(screen.getByRole('button', { name: 'Escalate' }))
+    const dialog = within(screen.getByRole('dialog'))
+    await write(user, dialog.getByLabelText(/why does this need escalating/i), 'Mine')
+    await user.click(dialog.getByRole('button', { name: 'Escalate' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This incident is already escalated')
+    expect(await screen.findByRole('note')).toHaveTextContent(/: Theirs$/)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Escalate' })).not.toBeInTheDocument()
+    expect(calls.filter((call) => call.method === 'GET' && call.path === TICKET)).toHaveLength(2)
   })
 
   it('draws the workflow with the incident\'s place on it, and lists every move made so far', async () => {
