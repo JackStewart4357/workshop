@@ -16,6 +16,8 @@ const EMPTY_DASHBOARD = {
       unassigned_open: 0,
       escalated_open: 0,
       by_assignee: [],
+      by_category: [],
+      by_location: { buildings: [], floors: [], seats: [] },
       average_hours: { to_acknowledge: null, to_assign: null, to_resolve: null },
     },
   }),

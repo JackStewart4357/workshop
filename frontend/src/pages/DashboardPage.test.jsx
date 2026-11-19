@@ -21,6 +21,22 @@ beforeEach(() => {
       { assignee_id: 'e-2', assignee: 'Marco Rossi', is_available: true, max_open_tickets: 4, open: 4 },
       { assignee_id: 'e-1', assignee: 'Priya Sharma', is_available: true, max_open_tickets: 5, open: 2 },
     ],
+    by_category: [
+      { category_id: 'c-1', category: 'Electrical', type: 'FACILITY', count: 6 },
+      { category_id: 'c-2', category: 'Network', type: 'TECHNOLOGY', count: 4 },
+      { category_id: 'c-3', category: 'Plumbing', type: 'FACILITY', count: 2 },
+    ],
+    by_location: {
+      buildings: [
+        { building_id: 'b-1', building: 'Headquarters', count: 9 },
+        { building_id: 'b-2', building: 'Riverside Annex', count: 3 },
+      ],
+      floors: [
+        { building: 'Headquarters', floor_level: 2, count: 5 },
+        { building: 'Headquarters', floor_level: 0, count: 3 },
+      ],
+      seats: [{ building: 'Headquarters', floor_level: 2, seat: '2F-A14', count: 4 }],
+    },
     average_hours: { to_acknowledge: 1.5, to_assign: 3, to_resolve: null },
   }
   incidents = []
@@ -133,6 +149,26 @@ describe('DashboardPage', () => {
       expect(work.queryByText('There are no engineers yet.')).not.toBeInTheDocument()
     })
 
+    it('ranks the categories, most common first, each marked facility or technology and linked to its list', async () => {
+      await renderDashboard(USERS.admin)
+      const rows = section('Most common categories').getAllByRole('listitem')
+      expect(rows.map((row) => row.textContent)).toEqual(['Electrical · Facility6', 'Network · Technology4', 'Plumbing · Facility2'])
+      expect(href('Network')).toBe('/incidents?category_id=c-2')
+    })
+
+    it('shows the buildings, floors and seats where incidents recur most', async () => {
+      await renderDashboard(USERS.admin)
+      const places = (name) =>
+        within(section('Where incidents recur').getByRole('group', { name }))
+          .getAllByRole('listitem')
+          .map((row) => row.textContent)
+      expect(places('Buildings')).toEqual(['Headquarters9', 'Riverside Annex3'])
+      expect(places('Floors')).toEqual(['Headquarters, Floor 25', 'Headquarters, Ground floor3'])
+      expect(places('Seats')).toEqual(['Headquarters, Floor 2, seat 2F-A144'])
+      expect(href('Riverside Annex')).toBe('/incidents?building_id=b-2') // only buildings can be filtered on
+      expect(within(section('Where incidents recur').getByRole('group', { name: 'Seats' })).queryByRole('link')).toBeNull()
+    })
+
     it('shows how quickly incidents are acknowledged, assigned and resolved, or that there is no data yet', async () => {
       await renderDashboard(USERS.admin)
       const times = section('Response times')
@@ -149,9 +185,13 @@ describe('DashboardPage', () => {
         unassigned_open: 0,
         escalated_open: 0,
         by_assignee: [],
+        by_category: [],
+        by_location: { buildings: [], floors: [], seats: [] },
         average_hours: { to_acknowledge: null, to_assign: null, to_resolve: null },
       }
       await renderDashboard(USERS.admin)
+      expect(section('Most common categories').getByText('No incidents have been reported yet.')).toBeInTheDocument()
+      expect(section('Where incidents recur').getByText('No incident names one of the seats yet.')).toBeInTheDocument()
       expect(href('All incidents 0')).toBe('/incidents')
       expect(getComputedStyle(screen.getByTestId('bar-CRITICAL')).flexBasis).toBe('0%')
       expect(section('Work across engineers').getByText('There are no engineers yet.')).toBeInTheDocument()

@@ -15,7 +15,7 @@ import StatTile from '../components/StatTile.jsx'
 import { PriorityChip, StatusChip } from '../components/StatusChip.jsx'
 import { useAuth } from '../context/AuthContext.js'
 import { PRIORITIES, PRIORITY_LABELS, STATUSES, getSummary, listIncidents } from '../services/incidentsService.js'
-import { formatDate } from '../utils/format.js'
+import { formatDate, locationOf } from '../utils/format.js'
 import { useServerList } from '../utils/useServerList.js'
 
 const ROLE_SUMMARY = {
@@ -37,6 +37,7 @@ const LOADERS = {
 }
 
 const MOST_URGENT_FIRST = [...PRIORITIES].reverse()
+const CATEGORY_TYPES = { FACILITY: 'Facility', TECHNOLOGY: 'Technology' }
 const RESPONSE_TIMES = [
   ['to_acknowledge', 'Acknowledged in'],
   ['to_assign', 'Assigned in'],
@@ -118,6 +119,49 @@ function PriorityBars({ counts, to }) {
           </Tooltip>
         )
       })}
+    </Stack>
+  )
+}
+
+/**
+ * A ranking, largest first as the API sends it: a name, a bar and the number. The bars share
+ * one scale, so they compare with each other. `to` makes the name a link to that list.
+ */
+function RankedBars({ rows, empty }) {
+  if (rows.length === 0) return <Typography color="text.secondary">{empty}</Typography>
+  const longest = rows[0].count
+  return (
+    <Stack component="ol" spacing={1} sx={{ listStyle: 'none', p: 0, m: 0 }}>
+      {rows.map(({ label, note, count, to }) => (
+        <Box
+          component="li"
+          key={label}
+          sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '260px 1fr' }, alignItems: 'center', columnGap: 1 }}
+        >
+          <Box sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+            {to ? (
+              <Link component={RouterLink} to={to}>
+                {label}
+              </Link>
+            ) : (
+              label
+            )}
+            {note && (
+              <Typography component="span" color="text.secondary">
+                {' '}
+                · {note}
+              </Typography>
+            )}
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box
+              aria-hidden
+              sx={{ flex: `0 1 ${(count / longest) * 100}%`, height: 12, bgcolor: 'primary.main', borderRadius: '0 4px 4px 0' }}
+            />
+            <Typography sx={{ fontWeight: 600 }}>{count}</Typography>
+          </Box>
+        </Box>
+      ))}
     </Stack>
   )
 }
@@ -216,6 +260,37 @@ function AdminDashboard({ summary }) {
       </Box>
       <Section title="Incidents by priority">
         <PriorityBars counts={summary.by_priority} to={(priority) => `/incidents?priority=${priority}`} />
+      </Section>
+      <Section title="Most common categories">
+        <RankedBars
+          empty="No incidents have been reported yet."
+          rows={summary.by_category.map((row) => ({
+            label: row.category,
+            note: CATEGORY_TYPES[row.type],
+            count: row.count,
+            to: `/incidents?category_id=${row.category_id}`,
+          }))}
+        />
+      </Section>
+      <Section title="Where incidents recur">
+        {/* The five with the most incidents ever reported there, whatever their status */}
+        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, 1fr)' } }}>
+          {[
+            ['Buildings', summary.by_location.buildings, (row) => `/incidents?building_id=${row.building_id}`],
+            ['Floors', summary.by_location.floors],
+            ['Seats', summary.by_location.seats],
+          ].map(([title, places, to]) => (
+            <Box key={title} role="group" aria-label={title}>
+              <Typography variant="subtitle2" component="h3" gutterBottom>
+                {title}
+              </Typography>
+              <RankedBars
+                empty={`No incident names one of the ${title.toLowerCase()} yet.`}
+                rows={places.map((row) => ({ label: locationOf(row), count: row.count, to: to?.(row) }))}
+              />
+            </Box>
+          ))}
+        </Box>
       </Section>
       <Section title="Work across engineers">
         {summary.by_assignee.length === 0 && <Typography color="text.secondary">There are no engineers yet.</Typography>}

@@ -5,7 +5,7 @@ Reached as /api/incidents/* (the local proxy and CloudFront both route here).
 
     GET    /                                service health
     GET    /categories                      the categories an incident can have
-    GET    /summary                         counts and averages for the dashboard
+    GET    /summary                         counts, rankings and averages for the dashboard
     GET    /tickets                         the incidents the caller may see, with filters
     POST   /tickets                         report an incident
     GET    /tickets/{incident_id}           one incident with its notes and history
@@ -252,13 +252,31 @@ def summary(_event, user):
         f"{hours('resolved_at')} AS to_resolve{FROM} WHERE {who}",
         params,
     )
-    by_assignee = []
-    if user["role"] == "ADMIN":  # how work is spread across the engineers
-        by_assignee = query_all(
+    by_assignee, by_category, by_location = [], [], {"buildings": [], "floors": [], "seats": []}
+    if user["role"] == "ADMIN":  # the questions about the whole site
+        by_assignee = query_all(  # how work is spread across the engineers
             "SELECT p.id AS assignee_id, u.full_name AS assignee, p.is_available, p.max_open_tickets, "
             f"(SELECT count(*) FROM incidents i WHERE i.assignee_id = p.id AND {STILL_OPEN}) AS open "
             "FROM engineer_profiles p JOIN users u ON u.id = p.user_id ORDER BY u.full_name, u.email"
         )
+        by_category = query_all(  # which kinds of problem are most common
+            f"SELECT c.id AS category_id, c.name AS category, c.type, count(*) AS count{FROM} "
+            "GROUP BY c.id ORDER BY count DESC, c.name"
+        )
+        by_location = {  # where problems keep coming back: the five worst of each
+            "buildings": query_all(
+                f"SELECT b.id AS building_id, b.name AS building, count(*) AS count{FROM} "
+                "GROUP BY b.id ORDER BY count DESC, b.name LIMIT 5"
+            ),
+            "floors": query_all(
+                f"SELECT b.name AS building, f.level AS floor_level, count(*) AS count{FROM} "
+                "WHERE i.floor_id IS NOT NULL GROUP BY b.name, f.id ORDER BY count DESC, b.name, f.level LIMIT 5"
+            ),
+            "seats": query_all(
+                f"SELECT b.name AS building, f.level AS floor_level, s.code AS seat, count(*) AS count{FROM} "
+                "WHERE i.seat_id IS NOT NULL GROUP BY b.name, f.level, s.id ORDER BY count DESC, b.name, s.code LIMIT 5"
+            ),
+        }
     return respond(
         200,
         {
@@ -268,6 +286,8 @@ def summary(_event, user):
             "unassigned_open": row["unassigned_open"],
             "escalated_open": row["escalated_open"],
             "by_assignee": by_assignee,
+            "by_category": by_category,
+            "by_location": by_location,
             "average_hours": {key: row[key] for key in ("to_acknowledge", "to_assign", "to_resolve")},
         },
     )

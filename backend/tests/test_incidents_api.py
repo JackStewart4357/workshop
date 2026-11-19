@@ -912,6 +912,8 @@ EMPTY = {
     "unassigned_open": 0,
     "escalated_open": 0,
     "by_assignee": [],
+    "by_category": [],
+    "by_location": {"buildings": [], "floors": [], "seats": []},
     "average_hours": {"to_acknowledge": None, "to_assign": None, "to_resolve": None},
 }
 
@@ -980,6 +982,12 @@ def test_the_admin_summary_counts_everything_and_shows_each_engineers_load(desk,
             "unassigned_open": 1,  # Tap; Blind is unassigned too, but closed
             "escalated_open": 1,  # Door; Blind is escalated too, but closed
             "by_assignee": [load(desk, "engineer", 1), load(desk, "other_engineer", 1)],  # Router; Door
+            "by_category": [{"category_id": desk.site["category"], "category": "Plumbing", "type": "FACILITY", "count": 6}],
+            "by_location": {
+                "buildings": [{"building_id": desk.site["building"], "building": "Headquarters", "count": 6}],
+                "floors": [],  # nobody named a floor or a seat
+                "seats": [],
+            },
             # (1 + 2 + 3 + 0.25 + 4) / 5 = 2.05, (2 + 2 + 4 + 0.25) / 4 = 2.0625, (10 + 4.5) / 2 = 7.25
             "average_hours": {"to_acknowledge": 2.1, "to_assign": 2.1, "to_resolve": 7.3},
         },
@@ -994,6 +1002,8 @@ def test_everyone_else_gets_the_summary_of_their_own_incidents(desk, busy):
         "unassigned_open": 1,
         "escalated_open": 0,
         "by_assignee": [],
+        "by_category": [],  # the site-wide rankings are for admins
+        "by_location": {"buildings": [], "floors": [], "seats": []},
         "average_hours": {"to_acknowledge": 1.5, "to_assign": 2.0, "to_resolve": 10.0},
     }
     mine = desk.call("engineer", "GET", "/summary")[1]  # Router, Lights, Projector
@@ -1001,6 +1011,54 @@ def test_everyone_else_gets_the_summary_of_their_own_incidents(desk, busy):
     assert mine["average_hours"] == {"to_acknowledge": 2.0, "to_assign": 2.7, "to_resolve": 7.3}
     theirs = desk.call("other_employee", "GET", "/summary")[1]  # Projector, Door, Blind
     assert (theirs["total"], theirs["escalated_open"], theirs["by_status"]["BLOCKED"]) == (3, 1, 1)
+
+
+def test_the_admin_sees_which_categories_and_places_have_the_most_incidents(desk):
+    site = desk.site
+    hq_seat = {"floor_id": site["floor"], "seat_id": site["seat"]}
+    annex_seat = {"building_id": site["annex"], "floor_id": site["annex_floor"], "seat_id": site["annex_seat"]}
+    for where in (hq_seat, hq_seat, hq_seat, {"floor_id": site["floor"]}, {}):  # five at Headquarters
+        desk.report(**where)
+    desk.report(**annex_seat, category_id=site["network"])  # and three at the Annex
+    desk.report("other_employee", **annex_seat, category_id=site["network"])
+    desk.report(building_id=site["annex"])
+
+    status, body = desk.call("admin", "GET", "/summary")
+    assert status == 200
+    assert body["by_category"] == [
+        {"category_id": site["category"], "category": "Plumbing", "type": "FACILITY", "count": 6},
+        {"category_id": site["network"], "category": "Network", "type": "TECHNOLOGY", "count": 2},
+    ]
+    assert body["by_location"] == {
+        "buildings": [
+            {"building_id": site["building"], "building": "Headquarters", "count": 5},
+            {"building_id": site["annex"], "building": "Annex", "count": 3},
+        ],
+        "floors": [  # only incidents that named a floor
+            {"building": "Headquarters", "floor_level": 2, "count": 4},
+            {"building": "Annex", "floor_level": 0, "count": 2},
+        ],
+        "seats": [  # only incidents that named a seat
+            {"building": "Headquarters", "floor_level": 2, "seat": "2F-A14", "count": 3},
+            {"building": "Annex", "floor_level": 0, "seat": "GF-R01", "count": 2},
+        ],
+    }
+    # Whoever else asks sees no site-wide ranking, even of their own incidents
+    for who in ("reporter", "engineer"):
+        mine = desk.call(who, "GET", "/summary")[1]
+        assert (mine["by_category"], mine["by_location"]) == ([], {"buildings": [], "floors": [], "seats": []})
+
+
+def test_the_rankings_show_the_five_worst_places_and_break_ties_by_name(desk):
+    for name in ("Zeta", "Beta", "Alpha", "Gamma", "Delta"):
+        building = db.query("INSERT INTO buildings (name, address) VALUES (%s, 'x') RETURNING id", (name,))["id"]
+        desk.report(building_id=str(building))
+    desk.report()
+    desk.report()  # Headquarters has two; the five others one each
+    buildings = desk.call("admin", "GET", "/summary")[1]["by_location"]["buildings"]
+    assert [(b["building"], b["count"]) for b in buildings] == [
+        ("Headquarters", 2), ("Alpha", 1), ("Beta", 1), ("Delta", 1), ("Gamma", 1),
+    ]
 
 
 # --- found by review -------------------------------------------------------------------
