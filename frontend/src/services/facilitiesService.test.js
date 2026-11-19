@@ -25,6 +25,8 @@ describe('facilitiesService', () => {
       'DELETE /api/facilities/floors/f-1': removed,
       'POST /api/facilities/floors/f-1/seats': created,
       'DELETE /api/facilities/seats/s-1': removed,
+      'PATCH /api/facilities/floors/f-1': () => ({ body: {} }),
+      'PATCH /api/facilities/seats/s-1': () => ({ body: {} }),
     })
     await facilities.addBuilding({ name: 'HQ', address: '1 Acme Plaza' })
     await facilities.updateBuilding('b-1', { name: 'HQ', address: '2 Acme Plaza' })
@@ -33,6 +35,12 @@ describe('facilitiesService', () => {
     await facilities.removeFloor('f-1')
     await facilities.addSeat('f-1', '2F-A14')
     await facilities.removeSeat('s-1')
+    await facilities.updateFloor('f-1', -1)
+    await facilities.updateSeat('s-1', '2F-A15')
+    expect(calls.slice(-2).map((call) => [call.method, call.path])).toEqual([
+      ['PATCH', '/api/facilities/floors/f-1'],
+      ['PATCH', '/api/facilities/seats/s-1'],
+    ])
     expect(calls.map((call) => call.body)).toEqual([
       { name: 'HQ', address: '1 Acme Plaza' },
       { name: 'HQ', address: '2 Acme Plaza' },
@@ -41,6 +49,8 @@ describe('facilitiesService', () => {
       undefined,
       { code: '2F-A14' },
       undefined,
+      { level: -1 },
+      { code: '2F-A15' },
     ])
   })
 

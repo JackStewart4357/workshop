@@ -60,6 +60,9 @@ describe('incidentsService', () => {
       [`POST ${API}/tickets/i-1/notes`]: () => ({ status: 201, body: {} }),
       [`POST ${API}/tickets/i-1/escalate`]: () => ({ body: {} }),
       [`DELETE ${API}/tickets/i-1`]: () => ({ status: 204 }),
+      [`PATCH ${API}/tickets/i-1/details`]: () => ({ body: {} }),
+      [`PATCH ${API}/notes/n-1`]: () => ({ body: {} }),
+      [`DELETE ${API}/notes/n-1`]: () => ({ status: 204 }),
     })
     await incidents.updateIncident('i-1', 'HIGH', 'e-1')
     await incidents.updateIncident('i-1', 'LOW', null)
@@ -70,6 +73,14 @@ describe('incidentsService', () => {
     await incidents.removeIncident('i-1')
     await incidents.escalateIncident('i-1', 'Nobody has replied')
     expect(calls.at(-1).path).toBe(`${API}/tickets/i-1/escalate`)
+    await incidents.updateDetails('i-1', 'Leaking tap', 'In the kitchen')
+    await incidents.updateNote('n-1', 'Ordered two parts')
+    await incidents.removeNote('n-1')
+    expect(calls.slice(-3).map((call) => call.path)).toEqual([
+      `${API}/tickets/i-1/details`,
+      `${API}/notes/n-1`,
+      `${API}/notes/n-1`,
+    ])
     expect(calls.map((call) => [call.method, call.body])).toEqual([
       ['PATCH', { priority: 'HIGH', assignee_id: 'e-1' }],
       ['PATCH', { priority: 'LOW', assignee_id: null }],
@@ -79,6 +90,9 @@ describe('incidentsService', () => {
       ['POST', { body: 'Thanks', is_internal: false }],
       ['DELETE', undefined],
       ['POST', { reason: 'Nobody has replied' }],
+      ['PATCH', { title: 'Leaking tap', description: 'In the kitchen' }],
+      ['PATCH', { body: 'Ordered two parts' }],
+      ['DELETE', undefined],
     ])
   })
 })

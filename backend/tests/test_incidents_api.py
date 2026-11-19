@@ -196,6 +196,9 @@ ENDPOINTS = [
     ("POST", f"/tickets/{MISSING}/status"),
     ("POST", f"/tickets/{MISSING}/notes"),
     ("POST", f"/tickets/{MISSING}/escalate"),
+    ("PATCH", f"/tickets/{MISSING}/details"),
+    ("PATCH", f"/notes/{MISSING}"),
+    ("DELETE", f"/notes/{MISSING}"),
 ]
 
 
@@ -292,6 +295,7 @@ def test_reporting_returns_the_whole_incident_with_its_first_history_row(desk):
         ],
         "next_statuses": [],
         "is_staff": False,
+        "can_edit": True,  # its reporter, while it is still open
         "can_escalate": True,
     }
     assert incident["created_at"][10] == "T"  # ISO 8601, which every browser's Date reads
@@ -810,14 +814,21 @@ def test_a_note_comes_back_as_the_incident_will_show_it(desk):
     assert status == 201
     assert note == {
         "id": note["id"],
+        "incident_id": incident["id"],
         "body": "Worse today",
         "is_internal": False,
+        "author_id": desk.cast["reporter"]["id"],
         "author": "Rita Reporter",
         "author_role": "EMPLOYEE",
         "created_at": note["created_at"],
+        "updated_at": note["created_at"],
+        "can_edit": True,  # what its author, who is asking, may do to it
+        "can_delete": True,
     }
-    for who in ("admin", "engineer", "reporter"):
-        assert desk.see(who, incident)["notes"] == [note]
+    # Everyone on the incident reads the same note; only what they may do to it differs
+    rights = {"admin": (False, True), "engineer": (False, False), "reporter": (True, True)}
+    for who, (can_edit, can_delete) in rights.items():
+        assert desk.see(who, incident)["notes"] == [{**note, "can_edit": can_edit, "can_delete": can_delete}]
 
 
 def test_internal_notes_are_written_and_read_by_staff_only(desk):
@@ -827,8 +838,12 @@ def test_internal_notes_are_written_and_read_by_staff_only(desk):
     from_admin = desk.note("admin", incident, body="Check the warranty", is_internal=True)[1]["note"]
     assert (private["is_internal"], private["author_role"], from_admin["author_role"]) == (True, "ENGINEER", "ADMIN")
 
-    assert desk.see("admin", incident)["notes"] == desk.see("engineer", incident)["notes"] == [public, private, from_admin]
-    assert desk.see("reporter", incident)["notes"] == [public]
+    def seen_by(who):  # the notes themselves; what each reader may do to them is tested further down
+        return [{**note, "can_edit": None, "can_delete": None} for note in desk.see(who, incident)["notes"]]
+
+    everything = [{**note, "can_edit": None, "can_delete": None} for note in (public, private, from_admin)]
+    assert seen_by("admin") == seen_by("engineer") == everything
+    assert seen_by("reporter") == everything[:1]
 
 
 @pytest.mark.parametrize("who, reported_by", [("reporter", "reporter"), ("other_engineer", "other_engineer")])
@@ -1211,6 +1226,106 @@ def test_only_the_five_longest_silences_are_listed(desk):
     informed = desk.call("admin", "GET", "/summary")[1]["kept_informed"]
     assert (informed["open"], informed["quiet"]) == (7, 7)
     assert [row["title"] for row in informed["quietest"]] == [f"Silent {number}" for number in (6, 5, 4, 3, 2)]
+
+
+# --- correcting a report, and changing or removing a note ------------------------------
+
+
+def test_the_reporter_corrects_their_report_until_work_starts(desk):
+    incident = desk.report()
+    status, body = desk.call(
+        "reporter", "PATCH", f"/api/incidents/tickets/{incident['id']}/details", body={"title": "  Leaking tap, 2nd floor ", "description": "Now worse"}
+    )
+    edited = body["incident"]
+    assert (status, edited["title"], edited["description"]) == (200, "Leaking tap, 2nd floor", "Now worse")
+    assert edited["updated_at"] > incident["updated_at"] and edited["history"] == incident["history"]
+
+    working = desk.move("admin", desk.assign(edited), "IN_PROGRESS")[1]["incident"]
+    assert (desk.see("reporter", working)["can_edit"], desk.see("admin", working)["can_edit"]) == (False, True)
+    status, body = desk.call("reporter", "PATCH", f"/tickets/{incident['id']}/details", body={"title": "Again", "description": "x"})
+    assert (status, body["error"]["message"]) == (409, "Work has started: add a note instead of changing the report")
+    assert desk.see("admin", incident)["title"] == "Leaking tap, 2nd floor"
+
+
+def test_an_admin_corrects_a_report_until_the_incident_is_closed(desk):
+    resolved = desk.at("RESOLVED")
+    status, body = desk.call("admin", "PATCH", f"/tickets/{resolved['id']}/details", body={"title": "Tidied", "description": "Tidied up"})
+    assert (status, body["incident"]["title"], body["incident"]["can_edit"]) == (200, "Tidied", True)
+
+    closed = desk.move("admin", resolved, "CLOSED")[1]["incident"]
+    assert closed["can_edit"] is False
+    status, body = desk.call("admin", "PATCH", f"/tickets/{resolved['id']}/details", body={"title": "Late", "description": "Too late"})
+    assert (status, body["error"]["message"]) == (409, "A closed incident cannot be changed")
+    assert desk.see("admin", resolved)["title"] == "Tidied"
+
+
+def test_only_the_reporter_or_an_admin_corrects_a_report_and_the_words_are_checked(desk):
+    incident = desk.assign(desk.report())
+    body = {"title": "Mine now", "description": "Changed"}
+    status, answer = desk.call("engineer", "PATCH", f"/tickets/{incident['id']}/details", body=body)  # assigned, not the reporter
+    assert (status, answer["error"]["code"], desk.see("engineer", incident)["can_edit"]) == (403, "access_denied", False)
+    status, answer = desk.call("other_employee", "PATCH", f"/tickets/{incident['id']}/details", body=body)
+    assert (status, answer["error"]["message"]) == (404, "Incident not found")
+    status, answer = desk.call("reporter", "PATCH", f"/tickets/{incident['id']}/details", body={"title": " ", "description": "d" * 4001})
+    assert (status, answer["error"]["details"]) == (
+        400,
+        {"title": "Title is required", "description": "Description must be at most 4000 characters"},
+    )
+    assert desk.see("admin", incident) == incident
+
+
+def test_an_author_changes_their_note_and_nobody_else_can(desk):
+    incident = desk.at("IN_PROGRESS")
+    note = desk.note("reporter", incident, body="Still leaking")[1]["note"]
+    status, body = desk.call("reporter", "PATCH", f"/api/incidents/notes/{note['id']}", body={"body": "  Still leaking, and louder "})
+    changed = body["note"]
+    assert (status, changed["body"], changed["can_edit"]) == (200, "Still leaking, and louder", True)
+    assert changed["updated_at"] > changed["created_at"] == note["created_at"]
+    assert desk.see("engineer", incident)["notes"][0]["body"] == "Still leaking, and louder"
+
+    for who in ("admin", "engineer"):  # nobody rewrites someone else's words, not even an admin
+        status, body = desk.call(who, "PATCH", f"/notes/{note['id']}", body={"body": "Rewritten"})
+        assert (status, body["error"]["code"]) == (403, "access_denied")
+    status, body = desk.call("reporter", "PATCH", f"/notes/{note['id']}", body={"body": " "})
+    assert (status, body["error"]["details"]) == (400, {"body": "Note is required"})
+    assert desk.see("admin", incident)["notes"][0]["body"] == "Still leaking, and louder"
+
+
+@pytest.mark.parametrize("who, removed", [("reporter", True), ("admin", True), ("engineer", False)])
+def test_a_note_is_removed_by_its_author_or_an_admin(desk, who, removed):
+    incident = desk.at("IN_PROGRESS")
+    kept = desk.note("engineer", incident, body="On my way")[1]["note"]
+    note = desk.note("reporter", incident, body="Thanks")[1]["note"]
+    status, body = desk.call(who, "DELETE", f"/api/incidents/notes/{note['id']}")
+    if removed:
+        assert (status, body) == (204, None)
+    else:
+        assert (status, body["error"]["code"]) == (403, "access_denied")
+    left = [row["id"] for row in desk.see("admin", incident)["notes"]]
+    assert left == ([kept["id"]] if removed else [kept["id"], note["id"]])
+
+
+def test_notes_are_frozen_once_the_incident_is_closed(desk):
+    incident = desk.at("RESOLVED")
+    note = desk.note("reporter", incident, body="Works now")[1]["note"]
+    closed = desk.move("reporter", incident, "CLOSED")[1]["incident"]
+    assert [(row["can_edit"], row["can_delete"]) for row in closed["notes"]] == [(False, False)]
+    for method, body in (("PATCH", {"body": "Changed my mind"}), ("DELETE", None)):
+        status, answer = desk.call("reporter", method, f"/notes/{note['id']}", body=body)
+        assert (status, answer["error"]["message"]) == (409, "A closed incident's notes cannot be changed")
+    assert desk.see("admin", incident)["notes"][0]["body"] == "Works now"
+
+
+@pytest.mark.parametrize("method", ["PATCH", "DELETE"])
+def test_a_note_someone_may_not_see_does_not_exist_for_them(desk, method):
+    incident = desk.at("IN_PROGRESS")
+    private = desk.note("engineer", incident, body="Probably the valve", is_internal=True)[1]["note"]
+    public = desk.note("engineer", incident, body="Looking into it")[1]["note"]
+    cases = [("reporter", private), ("other_employee", public), ("admin", {"id": MISSING})]  # internal; hidden incident; unknown
+    for who, note in cases:
+        status, body = desk.call(who, method, f"/notes/{note['id']}", body={"body": "x"})
+        assert (status, body["error"]["message"]) == (404, "Note not found")
+    assert len(desk.see("admin", incident)["notes"]) == 2
 
 
 # --- found by review -------------------------------------------------------------------

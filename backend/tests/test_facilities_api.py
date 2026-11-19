@@ -59,8 +59,10 @@ WRITES = [
     ("PATCH", f"/buildings/{MISSING}"),
     ("DELETE", f"/buildings/{MISSING}"),
     ("POST", f"/buildings/{MISSING}/floors"),
+    ("PATCH", f"/floors/{MISSING}"),
     ("DELETE", f"/floors/{MISSING}"),
     ("POST", f"/floors/{MISSING}/seats"),
+    ("PATCH", f"/seats/{MISSING}"),
     ("DELETE", f"/seats/{MISSING}"),
 ]
 
@@ -247,6 +249,46 @@ def test_the_longest_allowed_values_are_accepted(facilities, admin):
 
 
 # --- removing --------------------------------------------------------------------------
+
+
+def test_admin_changes_a_floors_number_and_a_seats_code_and_nothing_else(facilities, admin, site):
+    other = invoke(facilities, "POST", f"/buildings/{site['building']}/floors", token=admin, body={"level": 5})[1]["floor"]
+    spare = invoke(facilities, "POST", f"/floors/{site['floor']}/seats", token=admin, body={"code": "GF-A02"})[1]["seat"]
+
+    assert invoke(facilities, "PATCH", f"/api/facilities/floors/{site['floor']}", token=admin, body={"level": -1}) == (
+        200,
+        {"floor": {"id": site["floor"], "building_id": site["building"], "level": -1}},
+    )
+    assert invoke(facilities, "PATCH", f"/api/facilities/seats/{site['seat']}", token=admin, body={"code": "  B1-A01 "}) == (
+        200,
+        {"seat": {"id": site["seat"], "floor_id": site["floor"], "code": "B1-A01"}},
+    )
+    floors = invoke(facilities, "GET", "/buildings", token=admin)[1]["buildings"][0]["floors"]
+    assert [(floor["id"], floor["level"]) for floor in floors] == [(site["floor"], -1), (other["id"], 5)]
+    assert floors[0]["seats"] == [{"id": site["seat"], "code": "B1-A01"}, {"id": spare["id"], "code": "GF-A02"}]
+
+
+def test_a_change_cannot_clash_with_a_neighbour_or_break_the_rules(facilities, admin, site):
+    invoke(facilities, "POST", f"/buildings/{site['building']}/floors", token=admin, body={"level": 5})
+    invoke(facilities, "POST", f"/floors/{site['floor']}/seats", token=admin, body={"code": "GF-A02"})
+
+    status, body = invoke(facilities, "PATCH", f"/floors/{site['floor']}", token=admin, body={"level": 5})
+    assert (status, body["error"]["details"]) == (409, {"level": "This building already has that floor"})
+    status, body = invoke(facilities, "PATCH", f"/seats/{site['seat']}", token=admin, body={"code": "GF-A02"})
+    assert (status, body["error"]["details"]) == (409, {"code": "This floor already has a seat with that code"})
+    status, body = invoke(facilities, "PATCH", f"/floors/{site['floor']}", token=admin, body={"level": 201})
+    assert (status, body["error"]["details"]) == (400, {"level": "Level must be a whole number from -5 to 200"})
+    status, body = invoke(facilities, "PATCH", f"/seats/{site['seat']}", token=admin, body={"code": " "})
+    assert (status, body["error"]["details"]) == (400, {"code": "Seat code is required"})
+    # ...keeping what it has is not a clash, and nothing above changed anything
+    assert invoke(facilities, "PATCH", f"/floors/{site['floor']}", token=admin, body={"level": 0})[0] == 200
+    assert invoke(facilities, "PATCH", f"/seats/{site['seat']}", token=admin, body={"code": "GF-A01"})[0] == 200
+
+
+@pytest.mark.parametrize("what, path, body", [("Floor", "/floors", {"level": 3}), ("Seat", "/seats", {"code": "X"})])
+def test_changing_an_unknown_floor_or_seat_is_404(facilities, admin, what, path, body):
+    status, answer = invoke(facilities, "PATCH", f"{path}/{MISSING}", token=admin, body=body)
+    assert (status, answer["error"]["message"]) == (404, f"{what} not found")
 
 
 def test_removing_a_seat_leaves_the_rest(facilities, admin, site):

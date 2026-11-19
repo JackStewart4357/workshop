@@ -12,6 +12,7 @@ import DialogContentText from '@mui/material/DialogContentText'
 import DialogTitle from '@mui/material/DialogTitle'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import FormHelperText from '@mui/material/FormHelperText'
+import IconButton from '@mui/material/IconButton'
 import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
 import Rating from '@mui/material/Rating'
@@ -19,6 +20,8 @@ import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import DeleteIcon from '@mui/icons-material/DeleteOutlined'
+import EditIcon from '@mui/icons-material/Edit'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
@@ -34,8 +37,10 @@ import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
 import {
   COMMENT_MAX_LENGTH,
+  DESCRIPTION_MAX_LENGTH,
   NOTE_MAX_LENGTH,
   REASON_MAX_LENGTH,
+  TITLE_MAX_LENGTH,
   validateOptional,
   validateRequired,
 } from '../utils/validation.js'
@@ -118,6 +123,53 @@ function MoveDialog({ move, onMove, onClose }) {
   )
 }
 
+/**
+ * Corrects text that is already saved: the incident's title and description (`note` absent),
+ * or one note. The fields carry the API's names, so its complaints land under them.
+ */
+function EditDialog({ incident, note, onSave, onClose }) {
+  const { formError, saving, formRef, handleSubmit, field } = useDialogForm({
+    initial: note ? { body: note.body } : { title: incident.title, description: incident.description },
+    rules: note
+      ? { body: validateRequired('Note', NOTE_MAX_LENGTH) }
+      : {
+          title: validateRequired('Title', TITLE_MAX_LENGTH),
+          description: validateRequired('Description', DESCRIPTION_MAX_LENGTH),
+        },
+    toRequest: (form) => Object.fromEntries(Object.entries(form).map(([name, text]) => [name, text.trim()])),
+    onSave,
+    onClose,
+    firstField: note ? 'body' : 'title',
+  })
+
+  return (
+    <Dialog open onClose={saving ? undefined : onClose} fullWidth maxWidth="sm" aria-labelledby="edit-dialog-title">
+      <Box component="form" ref={formRef} noValidate onSubmit={handleSubmit}>
+        <DialogTitle id="edit-dialog-title">{note ? 'Edit note' : 'Edit incident'}</DialogTitle>
+        <DialogContent>
+          {formError && <Alert severity="error">{formError}</Alert>}
+          {note ? (
+            <TextField label="Note" inputRef={focusOnOpen} required multiline minRows={2} {...field('body')} />
+          ) : (
+            <>
+              <TextField label="Title" inputRef={focusOnOpen} required {...field('title')} />
+              <TextField label="Description" required multiline minRows={4} {...field('description')} />
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="contained" loading={saving}>
+            Save
+          </Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  )
+}
+
 /** For admins: how urgent the incident is and who works on it. Both are saved together. */
 function ManagePanel({ incident, engineers, busy, onSave, onDelete }) {
   const { formError, saving, formRef, handleSubmit, field } = useDialogForm({
@@ -169,7 +221,7 @@ function ManagePanel({ incident, engineers, busy, onSave, onDelete }) {
 }
 
 /** The notes on an incident and, until it is closed, the form to add one. */
-function Notes({ incident, busy, onAdd }) {
+function Notes({ incident, busy, onAdd, onEdit, onRemove }) {
   const { values, formError, saving, formRef, handleChange, handleSubmit, field } = useDialogForm({
     initial: { body: '', is_internal: false },
     rules: { body: validateRequired('Note', NOTE_MAX_LENGTH) },
@@ -184,23 +236,38 @@ function Notes({ incident, busy, onAdd }) {
       <Typography variant="h2">Notes</Typography>
       {incident.notes.length === 0 && <Typography color="text.secondary">No notes yet.</Typography>}
       <Stack component="ul" spacing={1.5} sx={{ listStyle: 'none', p: 0, my: 1.5 }}>
-        {incident.notes.map((note) => (
-          <Box
-            key={note.id}
-            component="li"
-            // An internal note is set apart by a coloured edge as well as its label
-            sx={{ pl: 1.5, borderLeft: 3, borderColor: note.is_internal ? 'warning.main' : 'divider', overflowWrap: 'anywhere' }}
-          >
-            <Stack direction="row" sx={{ flexWrap: 'wrap', alignItems: 'center', columnGap: 1 }}>
-              <Typography sx={{ fontWeight: 600 }}>{note.author}</Typography>
-              <Typography color="text.secondary">
-                {ROLE_LABELS[note.author_role]}, {formatDateTime(note.created_at)}
-              </Typography>
-              {note.is_internal && <Chip size="small" color="warning" label="Internal" />}
-            </Stack>
-            <Typography sx={{ whiteSpace: 'pre-wrap' }}>{note.body}</Typography>
-          </Box>
-        ))}
+        {incident.notes.map((note) => {
+          const written = formatDateTime(note.created_at)
+          const which = `note by ${note.author} from ${written}` // names its two buttons
+          return (
+            <Box
+              key={note.id}
+              component="li"
+              // An internal note is set apart by a coloured edge as well as its label
+              sx={{ pl: 1.5, borderLeft: 3, borderColor: note.is_internal ? 'warning.main' : 'divider', overflowWrap: 'anywhere' }}
+            >
+              <Stack direction="row" sx={{ flexWrap: 'wrap', alignItems: 'center', columnGap: 1 }}>
+                <Typography sx={{ fontWeight: 600 }}>{note.author}</Typography>
+                <Typography color="text.secondary">
+                  {ROLE_LABELS[note.author_role]}, {written}
+                  {note.updated_at && note.updated_at !== note.created_at && ' (edited)'}
+                </Typography>
+                {note.is_internal && <Chip size="small" color="warning" label="Internal" />}
+                {note.can_edit && (
+                  <IconButton size="small" aria-label={`Edit ${which}`} onClick={() => onEdit(note)} disabled={busy}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                )}
+                {note.can_delete && (
+                  <IconButton size="small" aria-label={`Remove ${which}`} onClick={() => onRemove(note)} disabled={busy}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                )}
+              </Stack>
+              <Typography sx={{ whiteSpace: 'pre-wrap' }}>{note.body}</Typography>
+            </Box>
+          )
+        })}
       </Stack>
 
       {incident.status !== 'CLOSED' && (
@@ -282,6 +349,7 @@ export default function IncidentDetailPage() {
   const { items, loadError, retry, error, setError, busy, change, removing, setRemoving, confirmRemove } =
     useServerList(fetchIncident)
   const [moving, setMoving] = useState(null) // the move waiting in a dialog
+  const [editing, setEditing] = useState(null) // what is being corrected: {} for the incident's text, { note } for a note
 
   if (loadError) return <LoadFailed title="Incident" message={loadError} onRetry={retry} />
   if (!items) return <LoadingScreen label="Loading the incident" />
@@ -311,18 +379,19 @@ export default function IncidentDetailPage() {
     return { ...move, to, label }
   })
 
-  // Resolves with the failure only when the dialog can show it: a problem with the reason.
-  async function move(to, reason) {
-    const failure = await change(() =>
-      to === ESCALATE.to
-        ? incidents.escalateIncident(incident.id, reason)
-        : incidents.changeStatus(incident.id, to, reason),
-    )
+  // Sends what a dialog asked for. Resolves with the failure only when the dialog can show
+  // it: a problem with what was typed.
+  async function send(action) {
+    const failure = await change(action)
     if (!failure || failure.status === 400) return failure
     setError(failure.message) // e.g. someone else moved it first: show where it stands now
     retry()
     return null
   }
+  const move = (to, reason) =>
+    send(() =>
+      to === ESCALATE.to ? incidents.escalateIncident(incident.id, reason) : incidents.changeStatus(incident.id, to, reason),
+    )
 
   // "Escalated by Alice Johnson on 19 Nov 2026, 08:00"; the name is missing if that account is gone
   const escalation = [
@@ -357,7 +426,14 @@ export default function IncidentDetailPage() {
       )}
 
       <Paper variant="outlined" sx={{ p: 2, overflowWrap: 'anywhere' }}>
-        <Typography variant="h1">{incident.title}</Typography>
+        <Stack direction="row" sx={{ alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
+          <Typography variant="h1">{incident.title}</Typography>
+          {incident.can_edit && (
+            <Button startIcon={<EditIcon />} onClick={() => setEditing({})} disabled={busy} sx={{ flexShrink: 0 }}>
+              Edit
+            </Button>
+          )}
+        </Stack>
         <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 0.5, my: 1 }}>
           <StatusChip status={incident.status} />
           <PriorityChip priority={incident.priority} />
@@ -469,9 +545,25 @@ export default function IncidentDetailPage() {
         incident={incident}
         busy={busy}
         onAdd={(body, isInternal) => change(() => incidents.addNote(incident.id, body, isInternal))}
+        onEdit={(note) => setEditing({ note })}
+        onRemove={(note) => setRemoving({ what: 'this note', run: () => incidents.removeNote(note.id) })}
       />
 
       {moving && <MoveDialog move={moving} onMove={move} onClose={() => setMoving(null)} />}
+      {editing && (
+        <EditDialog
+          incident={incident}
+          note={editing.note}
+          onSave={(text) =>
+            send(() =>
+              editing.note
+                ? incidents.updateNote(editing.note.id, text.body)
+                : incidents.updateDetails(incident.id, text.title, text.description),
+            )
+          }
+          onClose={() => setEditing(null)}
+        />
+      )}
       {removing && (
         <ConfirmDialog {...removing} busy={busy} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
       )}

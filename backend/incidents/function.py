@@ -10,9 +10,12 @@ Reached as /api/incidents/* (the local proxy and CloudFront both route here).
     POST   /tickets                         report an incident
     GET    /tickets/{incident_id}           one incident with its notes and history
     PATCH  /tickets/{incident_id}           set the priority and the assignee          (admin)
+    PATCH  /tickets/{incident_id}/details   correct the title and the description
     DELETE /tickets/{incident_id}           remove an incident                         (admin)
     POST   /tickets/{incident_id}/status    move an incident along the workflow
     POST   /tickets/{incident_id}/notes     add a note
+    PATCH  /notes/{note_id}                 change a note                              (its author)
+    DELETE /notes/{note_id}                 remove a note                              (its author or an admin)
     POST   /tickets/{incident_id}/escalate  flag an open incident for attention, saying why
 
 Who sees what: an admin sees every incident; anyone else sees the ones they reported and,
@@ -89,7 +92,8 @@ FROM = (
     "LEFT JOIN users eu ON eu.id = i.escalated_by "
 )
 NOTES = (
-    "SELECT n.id, n.body, n.is_internal, u.full_name AS author, u.role AS author_role, n.created_at "
+    "SELECT n.id, n.incident_id, n.body, n.is_internal, n.author_id, u.full_name AS author, "
+    "u.role AS author_role, n.created_at, n.updated_at "
     "FROM incident_notes n JOIN users u ON u.id = n.author_id "
 )
 
@@ -164,6 +168,21 @@ def may_move(user, incident, to):
     return incident["status"] == "RESOLVED"  # the reporter: confirm the fix, or reopen
 
 
+def may_edit(user, incident):
+    """The report's own words: its reporter may correct them until work starts, an admin
+    until the incident is closed."""
+    if user["role"] == "ADMIN":
+        return incident["status"] != "CLOSED"
+    return incident["reporter_id"] == user["id"] and incident["status"] == "OPEN"
+
+
+def with_rights(user, incident, note):
+    """A note plus what this user may do to it: its author may change it, its author or an
+    admin may remove it, and nobody once the incident is closed."""
+    live, mine = incident["status"] != "CLOSED", note["author_id"] == user["id"]
+    return {**note, "can_edit": live and mine, "can_delete": live and (mine or user["role"] == "ADMIN")}
+
+
 def needs_assignee(incident, to):
     """Work cannot start on an incident nobody is assigned to."""
     return (incident["status"], to) == ("OPEN", "IN_PROGRESS") and not incident["assignee_id"]
@@ -183,10 +202,11 @@ def detail(user, incident_id):
     user can make right now (the buttons to show)."""
     incident = find(user, incident_id)
     staff = is_staff(user, incident)
-    incident["notes"] = query_all(  # internal notes are for staff only
+    notes = query_all(  # internal notes are for staff only
         NOTES + "WHERE n.incident_id = %s AND (%s OR NOT n.is_internal) ORDER BY n.created_at, n.id",
         (incident_id, staff),
     )
+    incident["notes"] = [with_rights(user, incident, note) for note in notes]
     incident["history"] = query_all(
         "SELECT h.from_status, h.to_status, u.full_name AS changed_by, h.reason, h.changed_at "
         "FROM incident_status_history h JOIN users u ON u.id = h.changed_by "
@@ -197,6 +217,7 @@ def detail(user, incident_id):
         to for to in WORKFLOW[incident["status"]] if may_move(user, incident, to) and not needs_assignee(incident, to)
     ]
     incident["is_staff"] = staff  # tells the screen whether to offer internal notes
+    incident["can_edit"] = may_edit(user, incident)
     incident["can_escalate"] = not incident["is_escalated"] and incident["status"] not in ("RESOLVED", "CLOSED")
     del incident["assignee_user_id"]  # only needed for the checks above
     return incident
@@ -474,7 +495,70 @@ def add_note(event, user, incident_id):
                 raise ApiError(409, "conflict", "A closed incident cannot take new notes")
     except psycopg.errors.ForeignKeyViolation:  # the incident was removed a moment ago
         raise not_found() from None
-    return respond(201, {"note": query(NOTES + "WHERE n.id = %s", (note["id"],))})
+    return respond(201, {"note": with_rights(user, incident, query(NOTES + "WHERE n.id = %s", (note["id"],)))})
+
+
+def note_for(user, note_id):
+    """A note and its incident, if the user may see both; otherwise 404."""
+    gone = ApiError(404, "not_found", "Note not found")
+    note = query(NOTES + "WHERE n.id = %s", (note_id,))
+    if not note:
+        raise gone
+    try:
+        incident = find(user, note["incident_id"])
+    except ApiError:  # an incident this user may not see
+        raise gone from None
+    if note["is_internal"] and not is_staff(user, incident):
+        raise gone
+    return note, incident
+
+
+NOTES_CLOSED = "A closed incident's notes cannot be changed"
+# The incident's status is checked by the statement itself, so a close a moment ago still counts.
+NOTE_OF_LIVE_INCIDENT = "n.id = %s AND i.id = n.incident_id AND i.status <> 'CLOSED' RETURNING n.id"
+
+
+@protected()
+def update_note(event, user, note_id):
+    fields = validate(json_body(event), {"body": clean_text("Note", 2000)})
+    note, incident = note_for(user, note_id)
+    if note["author_id"] != user["id"]:  # nobody rewrites someone else's words, not even an admin
+        raise ApiError(403, "access_denied", "You do not have permission to perform this action")
+    if not query(
+        "UPDATE incident_notes n SET body = %s, updated_at = now() FROM incidents i WHERE " + NOTE_OF_LIVE_INCIDENT,
+        (fields["body"], note_id),
+    ):
+        raise ApiError(409, "conflict", NOTES_CLOSED)
+    return respond(200, {"note": with_rights(user, incident, query(NOTES + "WHERE n.id = %s", (note_id,)))})
+
+
+@protected()
+def delete_note(_event, user, note_id):
+    note, _incident = note_for(user, note_id)
+    if note["author_id"] != user["id"] and user["role"] != "ADMIN":
+        raise ApiError(403, "access_denied", "You do not have permission to perform this action")
+    if not query("DELETE FROM incident_notes n USING incidents i WHERE " + NOTE_OF_LIVE_INCIDENT, (note_id,)):
+        raise ApiError(409, "conflict", NOTES_CLOSED)
+    return respond(204)
+
+
+@protected()
+def update_details(event, user, incident_id):
+    """Correct what the report says. Its reporter may until work starts; after that the
+    conversation belongs in notes. An admin may until the incident is closed."""
+    fields = validate(json_body(event), {field: CREATE_RULES[field] for field in ("title", "description")})
+    incident = find(user, incident_id)
+    if user["role"] != "ADMIN" and incident["reporter_id"] != user["id"]:
+        raise ApiError(403, "access_denied", "You do not have permission to perform this action")
+    still, refusal = ("status = 'OPEN'", "Work has started: add a note instead of changing the report")
+    if user["role"] == "ADMIN":
+        still, refusal = ("status <> 'CLOSED'", "A closed incident cannot be changed")
+    if not query(
+        f"UPDATE incidents SET title = %s, description = %s, updated_at = now() WHERE id = %s AND {still} RETURNING id",
+        (fields["title"], fields["description"], incident_id),
+    ):
+        raise ApiError(409, "conflict", refusal)
+    return respond(200, {"incident": detail(user, incident_id)})
 
 
 @protected()
@@ -508,7 +592,10 @@ ROUTES = {
     ("PATCH", "/tickets/{incident_id}"): update_incident,
     ("DELETE", "/tickets/{incident_id}"): delete_incident,
     ("POST", "/tickets/{incident_id}/status"): change_status,
+    ("PATCH", "/tickets/{incident_id}/details"): update_details,
     ("POST", "/tickets/{incident_id}/notes"): add_note,
+    ("PATCH", "/notes/{note_id}"): update_note,
+    ("DELETE", "/notes/{note_id}"): delete_note,
     ("POST", "/tickets/{incident_id}/escalate"): escalate,
 }
 

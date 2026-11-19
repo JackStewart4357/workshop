@@ -57,8 +57,16 @@ export const changeStatus = (id, status, reason) =>
 export const escalateIncident = (id, reason) =>
   api(`${BASE}/tickets/${id}/escalate`, { method: 'POST', body: { reason } })
 
+/** Correct what was reported. The reporter may until work starts; an admin until it is closed. */
+export const updateDetails = (id, title, description) =>
+  api(`${BASE}/tickets/${id}/details`, { method: 'PATCH', body: { title, description } })
+
 export const addNote = (id, body, isInternal = false) =>
   api(`${BASE}/tickets/${id}/notes`, { method: 'POST', body: { body, is_internal: isInternal } })
+
+/** A note is changed by its author and removed by its author or an admin, until the incident is closed. */
+export const updateNote = (noteId, body) => api(`${BASE}/notes/${noteId}`, { method: 'PATCH', body: { body } })
+export const removeNote = (noteId) => api(`${BASE}/notes/${noteId}`, { method: 'DELETE' })
 
 export const removeIncident = (id) => api(`${BASE}/tickets/${id}`, { method: 'DELETE' })
 

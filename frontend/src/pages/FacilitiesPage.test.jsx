@@ -1,5 +1,5 @@
 // The page against a small fake facilities API: only fetch is faked.
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import FacilitiesPage from './FacilitiesPage.jsx'
@@ -383,6 +383,111 @@ describe('FacilitiesPage', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
 
     finish({ status: 204 })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('changes a floor\'s number, starting from the one it has', async () => {
+    const { calls, user } = await renderPage({
+      [`PATCH ${API}/floors/f-2`]: ({ body }) => {
+        const floors = buildings[0].floors.map((floor) => (floor.id === 'f-2' ? { ...floor, ...body } : floor))
+        buildings = [{ ...buildings[0], floors }, buildings[1]]
+        return { body: { floor: { id: 'f-2', building_id: 'b-1', level: body.level } } }
+      },
+    })
+    await user.click(within(headquarters()).getByRole('button', { name: 'Change Floor 2' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Change Floor 2 of Headquarters' }))
+    expect(dialog.getByLabelText(/floor number/i)).toHaveValue(2)
+    await user.clear(dialog.getByLabelText(/floor number/i))
+    await user.type(dialog.getByLabelText(/floor number/i), '3{Enter}')
+
+    expect(await within(headquarters()).findByRole('group', { name: 'Floor 3' })).toBeInTheDocument()
+    expect(within(headquarters()).queryByRole('group', { name: 'Floor 2' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(writes(calls)).toEqual([{ method: 'PATCH', path: `${API}/floors/f-2`, token: undefined, body: { level: 3 } }])
+  })
+
+  it('checks a changed floor number first, and shows the API\'s complaint under the field', async () => {
+    const taken = 'This building already has that floor'
+    const { calls, user } = await renderPage({
+      [`PATCH ${API}/floors/f-2`]: () => apiError(409, 'conflict', taken, { level: taken }),
+    })
+    await user.click(within(headquarters()).getByRole('button', { name: 'Change Floor 2' }))
+    const dialog = within(screen.getByRole('dialog'))
+    await user.clear(dialog.getByLabelText(/floor number/i))
+    await user.type(dialog.getByLabelText(/floor number/i), '201{Enter}')
+    expect(dialog.getByText('Floor must be between -5 and 200')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await user.clear(dialog.getByLabelText(/floor number/i))
+    await user.type(dialog.getByLabelText(/floor number/i), '0{Enter}')
+    expect(await dialog.findByText(taken)).toBeInTheDocument()
+    expect(dialog.queryByRole('alert')).not.toBeInTheDocument() // under the field, not in a banner
+    expect(dialog.getByLabelText(/floor number/i)).toHaveValue(0)
+
+    await user.click(dialog.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(within(headquarters()).getByRole('group', { name: 'Floor 2' })).toBeInTheDocument() // unchanged
+  })
+
+  it('changes a seat\'s code from its chip, while its cross still removes it', async () => {
+    const { calls, user } = await renderPage({
+      [`PATCH ${API}/seats/s-1`]: ({ body }) => {
+        const floors = buildings[0].floors.map((floor) => ({ ...floor, seats: floor.seats.map((seat) => ({ ...seat, ...body })) }))
+        buildings = [{ ...buildings[0], floors }, buildings[1]]
+        return { body: { seat: { id: 's-1', floor_id: 'f-0', code: body.code } } }
+      },
+    })
+    await user.click(screen.getByRole('img', { name: 'Remove seat GF-A01' }))
+    expect(screen.getAllByRole('dialog')).toHaveLength(1) // only the confirmation: the cross is not the chip
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: 'Change seat GF-A01' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Change seat GF-A01' }))
+    expect(dialog.getByLabelText(/seat code/i)).toHaveValue('GF-A01')
+    await user.clear(dialog.getByLabelText(/seat code/i))
+    await user.type(dialog.getByLabelText(/seat code/i), ' GF-B02 ')
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('button', { name: 'Change seat GF-B02' })).toBeInTheDocument()
+    expect(screen.queryByText('GF-A01')).not.toBeInTheDocument()
+    expect(writes(calls)).toEqual([{ method: 'PATCH', path: `${API}/seats/s-1`, token: undefined, body: { code: 'GF-B02' } }])
+  })
+
+  it('shows a problem with a changed seat code in its dialog: missing, a duplicate, or a failure', async () => {
+    const taken = 'This floor already has a seat with that code'
+    const answers = [apiError(409, 'conflict', taken, { code: taken }), apiError(404, 'not_found', 'Seat not found')]
+    const { calls, user } = await renderPage({ [`PATCH ${API}/seats/s-1`]: () => answers.shift() })
+    await user.click(screen.getByRole('button', { name: 'Change seat GF-A01' }))
+    const dialog = within(screen.getByRole('dialog'))
+    await user.clear(dialog.getByLabelText(/seat code/i))
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(dialog.getByText('Seat code is required')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await user.type(dialog.getByLabelText(/seat code/i), 'GF-A02{Enter}')
+    expect(await dialog.findByText(taken)).toBeInTheDocument()
+    expect(dialog.queryByRole('alert')).not.toBeInTheDocument()
+
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Seat not found') // someone else removed it
+    expect(dialog.getByLabelText(/seat code/i)).toHaveValue('GF-A02')
+  })
+
+  it('holds the change dialog while it is being saved', async () => {
+    let finish
+    const { calls, user } = await renderPage({
+      [`PATCH ${API}/seats/s-1`]: () => new Promise((resolve) => (finish = resolve)),
+    })
+    await user.click(screen.getByRole('button', { name: 'Change seat GF-A01' }))
+    await user.type(screen.getByRole('dialog').querySelector('input'), '{Enter}')
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }) // Escape must not close it either
+    expect(writes(calls)).toHaveLength(1)
+
+    finish({ body: { seat: { id: 's-1', floor_id: 'f-0', code: 'GF-A01' } } })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

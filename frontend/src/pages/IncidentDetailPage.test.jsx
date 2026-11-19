@@ -9,6 +9,7 @@ import { formatDateTime } from '../utils/format.js'
 
 const TICKET = '/api/incidents/tickets/i-1'
 const FEEDBACK = '/api/feedback/incidents/i-1'
+const NOTE = '/api/incidents/notes/n-1'
 const LATER = '2026-11-19T08:00:00+00:00'
 
 const engineers = [
@@ -52,8 +53,8 @@ beforeEach(() => {
     resolved_at: null,
     closed_at: null,
     notes: [
-      { id: 'n-1', body: 'It is the cold tap.', is_internal: false, author: 'Alice Johnson', author_role: 'EMPLOYEE', created_at: '2026-11-18T09:20:00+00:00' },
-      { id: 'n-2', body: 'Washer ordered.', is_internal: true, author: 'Priya Sharma', author_role: 'ENGINEER', created_at: '2026-11-18T11:30:00+00:00' },
+      { id: 'n-1', body: 'It is the cold tap.', is_internal: false, author: 'Alice Johnson', author_id: USERS.employee.id, author_role: 'EMPLOYEE', created_at: '2026-11-18T09:20:00+00:00', updated_at: '2026-11-18T09:20:00+00:00', can_edit: false, can_delete: false },
+      { id: 'n-2', body: 'Washer ordered.', is_internal: true, author: 'Priya Sharma', author_id: USERS.engineer.id, author_role: 'ENGINEER', created_at: '2026-11-18T11:30:00+00:00', updated_at: '2026-11-18T11:30:00+00:00', can_edit: false, can_delete: false },
     ],
     history: [
       { from_status: null, to_status: 'OPEN', changed_by: 'Alice Johnson', reason: null, changed_at: '2026-11-18T09:15:00+00:00' },
@@ -61,6 +62,7 @@ beforeEach(() => {
     ],
     next_statuses: ['BLOCKED', 'RESOLVED'],
     is_staff: true,
+    can_edit: false,
   }
 })
 
@@ -98,8 +100,20 @@ const api = {
     incident = { ...incident, ...body, assignee, updated_at: LATER }
     return { body: { incident } }
   },
+  [`PATCH ${TICKET}/details`]: ({ body }) => {
+    incident = { ...incident, ...body, updated_at: LATER }
+    return { body: { incident } }
+  },
+  [`PATCH ${NOTE}`]: ({ body }) => {
+    incident = { ...incident, notes: incident.notes.map((note) => (note.id === 'n-1' ? { ...note, ...body, updated_at: LATER } : note)) }
+    return { body: { note: incident.notes[0] } }
+  },
+  [`DELETE ${NOTE}`]: () => {
+    incident = { ...incident, notes: incident.notes.filter((note) => note.id !== 'n-1') }
+    return { status: 204 }
+  },
   [`POST ${TICKET}/notes`]: ({ body }) => {
-    const note = { id: 'n-9', ...body, author: 'Priya Sharma', author_role: 'ENGINEER', created_at: LATER }
+    const note = { id: 'n-9', ...body, author: 'Priya Sharma', author_id: USERS.engineer.id, author_role: 'ENGINEER', created_at: LATER, updated_at: LATER, can_edit: true, can_delete: true }
     incident = { ...incident, notes: [...incident.notes, note], updated_at: LATER }
     return { status: 201, body: { note } }
   },
@@ -718,5 +732,174 @@ describe('IncidentDetailPage', () => {
     incident = { ...incident, status: 'CLOSED', resolved_at: resolvedAt, next_statuses: [] }
     await renderPage()
     expect(section('Progress').queryAllByText('Skipped')).toHaveLength(skipped)
+  })
+
+  // --- correcting what was written -------------------------------------------------------
+
+  const ALICE_NOTE = `note by Alice Johnson from ${formatDateTime('2026-11-18T09:20:00+00:00')}`
+  const mine = (changes) => {
+    incident = { ...incident, notes: [{ ...incident.notes[0], ...changes }, incident.notes[1]] }
+  }
+
+  it('offers no way to change the report or a note to someone who may not', async () => {
+    await renderPage()
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^(Edit|Remove) note/ })).not.toBeInTheDocument()
+  })
+
+  it('lets the title and description be corrected, starting from what is saved', async () => {
+    incident = { ...incident, can_edit: true }
+    const { calls, user } = await renderPage({ user: USERS.employee })
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit incident' }))
+    expect(dialog.getByLabelText(/title/i)).toHaveValue('Leaking tap')
+    expect(dialog.getByLabelText(/description/i)).toHaveValue('Drips all night.\nThe floor is wet.')
+
+    await user.clear(dialog.getByLabelText(/title/i))
+    await write(user, dialog.getByLabelText(/title/i), '  Leaking cold tap ')
+    await user.clear(dialog.getByLabelText(/description/i))
+    await write(user, dialog.getByLabelText(/description/i), ' In the second-floor kitchen. ')
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('heading', { name: 'Leaking cold tap', level: 1 })).toBeInTheDocument()
+    expect(screen.getByText('In the second-floor kitchen.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(writes(calls)).toEqual([
+      {
+        method: 'PATCH',
+        path: `${TICKET}/details`,
+        token: undefined,
+        body: { title: 'Leaking cold tap', description: 'In the second-floor kitchen.' },
+      },
+    ])
+  })
+
+  it('checks the corrected text like the report form, and shows the API\'s complaint under its field', async () => {
+    incident = { ...incident, can_edit: true }
+    const complaint = 'Description contains characters that are not valid text'
+    const { calls, user } = await renderPage({
+      routes: {
+        [`PATCH ${TICKET}/details`]: () => apiError(400, 'validation_error', 'Some fields are invalid', { description: complaint }),
+      },
+    })
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const dialog = within(screen.getByRole('dialog'))
+    await user.clear(dialog.getByLabelText(/title/i))
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(dialog.getByText('Title is required')).toBeInTheDocument()
+    await write(user, dialog.getByLabelText(/title/i), 't'.repeat(151))
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(dialog.getByText('Title must be at most 150 characters')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await user.clear(dialog.getByLabelText(/title/i))
+    await write(user, dialog.getByLabelText(/title/i), 'Leaking tap')
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(await dialog.findByText(complaint)).toBeInTheDocument()
+    expect(dialog.queryByRole('alert')).not.toBeInTheDocument() // under the field, and the dialog stays
+    expect(dialog.getByLabelText(/description/i)).toHaveFocus()
+  })
+
+  it('when the report can no longer be changed, says so and shows where the incident stands', async () => {
+    incident = { ...incident, can_edit: true }
+    const refusal = 'Work has started: add a note instead of changing the report'
+    const { calls, user } = await renderPage({
+      user: USERS.employee,
+      routes: {
+        [`PATCH ${TICKET}/details`]: () => {
+          incident = { ...incident, can_edit: false } // what the API would say on the next read
+          return apiError(409, 'conflict', refusal)
+        },
+      },
+    })
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(refusal)
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Leaking tap', level: 1 })).toBeInTheDocument()
+    expect(calls.filter((call) => call.method === 'GET' && call.path === TICKET)).toHaveLength(2)
+  })
+
+  it('lets a note be corrected by whoever may, and marks it as edited', async () => {
+    mine({ can_edit: true })
+    const { calls, user } = await renderPage({ user: USERS.employee })
+    expect(section('Notes').queryByText(/\(edited\)/)).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^Edit note/ })).toHaveLength(1) // only the one they may change
+    expect(screen.queryByRole('button', { name: /^Remove note/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: `Edit ${ALICE_NOTE}` }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit note' }))
+    expect(dialog.getByLabelText(/note/i)).toHaveValue('It is the cold tap.')
+    await user.clear(dialog.getByLabelText(/note/i))
+    await write(user, dialog.getByLabelText(/note/i), ' It is the hot tap. ')
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+
+    const notes = () => within(section('Notes').getByRole('list')).getAllByRole('listitem')
+    await waitFor(() => expect(notes()[0]).toHaveTextContent('It is the hot tap.'))
+    expect(notes()[0]).toHaveTextContent(`${formatDateTime('2026-11-18T09:20:00+00:00')} (edited)`)
+    expect(notes()[1]).not.toHaveTextContent('(edited)')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(writes(calls)).toEqual([{ method: 'PATCH', path: NOTE, token: undefined, body: { body: 'It is the hot tap.' } }])
+  })
+
+  it('shows a problem with a corrected note under the field, or as the page\'s message when it was refused', async () => {
+    mine({ can_edit: true })
+    const closed = "A closed incident's notes cannot be changed"
+    const answers = [
+      apiError(400, 'validation_error', 'Some fields are invalid', { body: 'Note must be at most 2000 characters' }),
+      apiError(409, 'conflict', closed),
+    ]
+    const { calls, user } = await renderPage({ user: USERS.employee, routes: { [`PATCH ${NOTE}`]: () => answers.shift() } })
+    await user.click(screen.getByRole('button', { name: `Edit ${ALICE_NOTE}` }))
+    const dialog = within(screen.getByRole('dialog'))
+    await user.clear(dialog.getByLabelText(/note/i))
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(dialog.getByText('Note is required')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await write(user, dialog.getByLabelText(/note/i), 'Longer than the API allows')
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(await dialog.findByText('Note must be at most 2000 characters')).toBeInTheDocument()
+
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(closed)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(section('Notes').getByText('It is the cold tap.')).toBeInTheDocument()
+  })
+
+  it('removes a note only after it is confirmed', async () => {
+    mine({ can_delete: true })
+    const { calls, user } = await renderPage({ user: USERS.admin })
+    expect(screen.queryByRole('button', { name: /^Edit note/ })).not.toBeInTheDocument() // an admin removes, the author edits
+    await user.click(screen.getByRole('button', { name: `Remove ${ALICE_NOTE}` }))
+    let dialog = within(screen.getByRole('dialog', { name: 'Remove this note?' }))
+    expect(dialog.getByText('This cannot be undone.')).toBeInTheDocument()
+    await user.click(dialog.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(writes(calls)).toEqual([])
+
+    await user.click(screen.getByRole('button', { name: `Remove ${ALICE_NOTE}` }))
+    dialog = within(screen.getByRole('dialog'))
+    await user.click(dialog.getByRole('button', { name: 'Remove' }))
+
+    await waitFor(() => expect(section('Notes').queryByText('It is the cold tap.')).not.toBeInTheDocument())
+    expect(section('Notes').getByText('Washer ordered.')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([{ method: 'DELETE', path: NOTE, token: undefined, body: undefined }])
+  })
+
+  it('says why a note could not be removed, and keeps it', async () => {
+    mine({ can_delete: true })
+    const { user } = await renderPage({
+      user: USERS.admin,
+      routes: { [`DELETE ${NOTE}`]: () => apiError(409, 'conflict', "A closed incident's notes cannot be changed") },
+    })
+    await user.click(screen.getByRole('button', { name: `Remove ${ALICE_NOTE}` }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent("A closed incident's notes cannot be changed")
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(section('Notes').getByText('It is the cold tap.')).toBeInTheDocument()
   })
 })

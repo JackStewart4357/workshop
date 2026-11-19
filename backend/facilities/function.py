@@ -9,8 +9,10 @@ Reached as /api/facilities/* (the local proxy and CloudFront both route here).
     PATCH  /buildings/{building_id}          change a building's name or address  (admin)
     DELETE /buildings/{building_id}          remove a building, floors and seats  (admin)
     POST   /buildings/{building_id}/floors   add a floor                          (admin)
+    PATCH  /floors/{floor_id}                change a floor's number              (admin)
     DELETE /floors/{floor_id}                remove a floor and its seats         (admin)
     POST   /floors/{floor_id}/seats          add a seat                           (admin)
+    PATCH  /seats/{seat_id}                  change a seat's code                 (admin)
     DELETE /seats/{seat_id}                  remove a seat                        (admin)
 
 Anything an incident points at cannot be removed: the answer is 409 and nothing changes.
@@ -29,6 +31,8 @@ logger.setLevel(logging.INFO)
 
 BUILDING_RULES = {"name": clean_text("Name", 100), "address": clean_text("Address", 200)}
 NAME_TAKEN = "A building with this name already exists"
+FLOOR_TAKEN = "This building already has that floor"
+SEAT_TAKEN = "This floor already has a seat with that code"
 
 
 def not_found(what):
@@ -83,17 +87,52 @@ def create_building(event, _user):
 @protected("ADMIN")
 def update_building(event, _user, building_id):
     fields = validate(json_body(event), BUILDING_RULES)
-    try:
-        building = query(
-            "UPDATE buildings SET name = %s, address = %s, updated_at = now() WHERE id = %s "
-            "RETURNING id, name, address",
-            (fields["name"], fields["address"], building_id),
-        )
-    except psycopg.errors.UniqueViolation:
-        raise ApiError(409, "conflict", NAME_TAKEN, {"name": NAME_TAKEN}) from None
-    if not building:
-        raise not_found("Building")
+    building = change(
+        "Building",
+        "UPDATE buildings SET name = %s, address = %s, updated_at = now() WHERE id = %s RETURNING id, name, address",
+        (fields["name"], fields["address"], building_id),
+        "name",
+        NAME_TAKEN,
+    )
     return respond(200, {"building": building})
+
+
+@protected("ADMIN")
+def update_floor(event, _user, floor_id):
+    fields = validate(json_body(event), {"level": clean_int("Level", -5, 200)})
+    floor = change(
+        "Floor",
+        "UPDATE floors SET level = %s WHERE id = %s RETURNING id, building_id, level",
+        (fields["level"], floor_id),
+        "level",
+        FLOOR_TAKEN,
+    )
+    return respond(200, {"floor": floor})
+
+
+@protected("ADMIN")
+def update_seat(event, _user, seat_id):
+    fields = validate(json_body(event), {"code": clean_text("Seat code", 20)})
+    seat = change(
+        "Seat",
+        "UPDATE seats SET code = %s WHERE id = %s RETURNING id, floor_id, code",
+        (fields["code"], seat_id),
+        "code",
+        SEAT_TAKEN,
+    )
+    return respond(200, {"seat": seat})
+
+
+def change(what, sql, params, field, taken):
+    """Update a building, floor or seat. The database's unique rules decide whether the new
+    name, number or code clashes with a neighbour."""
+    try:
+        row = query(sql, params)
+    except psycopg.errors.UniqueViolation:
+        raise ApiError(409, "conflict", taken, {field: taken}) from None
+    if not row:
+        raise not_found(what)
+    return row
 
 
 def add_inside(parent, sql, params, field, taken):
@@ -117,7 +156,7 @@ def create_floor(event, _user, building_id):
         "ON CONFLICT (building_id, level) DO NOTHING RETURNING id, building_id, level",
         (building_id, fields["level"]),
         "level",
-        "This building already has that floor",
+        FLOOR_TAKEN,
     )
     return respond(201, {"floor": floor})
 
@@ -131,7 +170,7 @@ def create_seat(event, _user, floor_id):
         "ON CONFLICT (floor_id, code) DO NOTHING RETURNING id, floor_id, code",
         (floor_id, fields["code"]),
         "code",
-        "This floor already has a seat with that code",
+        SEAT_TAKEN,
     )
     return respond(201, {"seat": seat})
 
@@ -188,8 +227,10 @@ ROUTES = {
     ("PATCH", "/buildings/{building_id}"): update_building,
     ("DELETE", "/buildings/{building_id}"): delete_building,
     ("POST", "/buildings/{building_id}/floors"): create_floor,
+    ("PATCH", "/floors/{floor_id}"): update_floor,
     ("DELETE", "/floors/{floor_id}"): delete_floor,
     ("POST", "/floors/{floor_id}/seats"): create_seat,
+    ("PATCH", "/seats/{seat_id}"): update_seat,
     ("DELETE", "/seats/{seat_id}"): delete_seat,
 }
 

@@ -14,8 +14,10 @@ export const updateBuilding = (id, fields) => api(`${BASE}/buildings/${id}`, { m
 export const removeBuilding = (id) => api(`${BASE}/buildings/${id}`, { method: 'DELETE' })
 export const addFloor = (buildingId, level) =>
   api(`${BASE}/buildings/${buildingId}/floors`, { method: 'POST', body: { level } })
+export const updateFloor = (id, level) => api(`${BASE}/floors/${id}`, { method: 'PATCH', body: { level } })
 export const removeFloor = (id) => api(`${BASE}/floors/${id}`, { method: 'DELETE' })
 export const addSeat = (floorId, code) => api(`${BASE}/floors/${floorId}/seats`, { method: 'POST', body: { code } })
+export const updateSeat = (id, code) => api(`${BASE}/seats/${id}`, { method: 'PATCH', body: { code } })
 export const removeSeat = (id) => api(`${BASE}/seats/${id}`, { method: 'DELETE' })
 
 /** Floors are stored as a number: 0 is the ground floor and negative numbers are basements. */

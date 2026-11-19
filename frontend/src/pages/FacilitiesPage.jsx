@@ -69,6 +69,41 @@ function BuildingDialog({ building, onSave, onClose }) {
   )
 }
 
+/**
+ * A one-field dialog for correcting what is already there: a floor's number or a seat's code.
+ * `name` is the API's name for the field, so its complaint about it lands under the field.
+ */
+function ChangeDialog({ title, label, name, type = 'text', value, validate, onSave, onClose }) {
+  const { formError, saving, formRef, handleSubmit, field } = useDialogForm({
+    initial: { [name]: String(value) },
+    rules: { [name]: validate },
+    toRequest: (values) => values[name].trim(),
+    onSave,
+    onClose,
+    firstField: name,
+  })
+
+  return (
+    <Dialog open onClose={saving ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="change-dialog-title">
+      <Box component="form" ref={formRef} noValidate onSubmit={handleSubmit}>
+        <DialogTitle id="change-dialog-title">{title}</DialogTitle>
+        <DialogContent>
+          {formError && <Alert severity="error">{formError}</Alert>}
+          <TextField label={label} type={type} inputRef={focusOnOpen} required {...field(name)} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="contained" loading={saving}>
+            Save
+          </Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  )
+}
+
 /** A one-field "add" form, used for a floor (its number) and for a seat (its code). */
 function InlineAdd({ label, button, type = 'text', validate, onAdd, busy }) {
   const [value, setValue] = useState('')
@@ -127,6 +162,7 @@ export default function FacilitiesPage() {
     confirmRemove,
   } = useServerList(facilities.listBuildings)
   const [editing, setEditing] = useState(null) // the building in the dialog; {} for a new one
+  const [changing, setChanging] = useState(null) // the floor or seat in the one-field dialog, with how to save it
 
   if (loadError) return <LoadFailed title="Facilities" message={loadError} onRetry={retry} />
   if (!buildings) return <LoadingScreen label="Loading facilities" />
@@ -185,6 +221,24 @@ export default function FacilitiesPage() {
                   <Typography sx={{ flexGrow: 1, fontWeight: 600 }}>{label}</Typography>
                   <IconButton
                     size="small"
+                    aria-label={`Change ${label}`}
+                    onClick={() =>
+                      setChanging({
+                        title: `Change ${label} of ${building.name}`,
+                        label: 'Floor number',
+                        name: 'level',
+                        type: 'number',
+                        value: floor.level,
+                        validate: validateFloorLevel,
+                        save: (level) => facilities.updateFloor(floor.id, Number(level)),
+                      })
+                    }
+                    disabled={busy}
+                  >
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton
+                    size="small"
                     aria-label={`Remove ${label}`}
                     onClick={() =>
                       setRemoving({
@@ -205,6 +259,18 @@ export default function FacilitiesPage() {
                       key={seat.id}
                       label={seat.code}
                       disabled={busy}
+                      // The chip itself opens the code for correcting; its cross still removes the seat
+                      aria-label={`Change seat ${seat.code}`}
+                      onClick={() =>
+                        setChanging({
+                          title: `Change seat ${seat.code}`,
+                          label: 'Seat code',
+                          name: 'code',
+                          value: seat.code,
+                          validate: validateSeatCode,
+                          save: (code) => facilities.updateSeat(seat.id, code),
+                        })
+                      }
                       deleteIcon={<CancelIcon titleAccess={`Remove seat ${seat.code}`} />}
                       onDelete={() =>
                         setRemoving({ what: `seat ${seat.code}`, run: () => facilities.removeSeat(seat.id) })
@@ -243,6 +309,13 @@ export default function FacilitiesPage() {
             change(() => (editing.id ? facilities.updateBuilding(editing.id, fields) : facilities.addBuilding(fields)))
           }
           onClose={() => setEditing(null)}
+        />
+      )}
+      {changing && (
+        <ChangeDialog
+          {...changing}
+          onSave={(value) => change(() => changing.save(value))}
+          onClose={() => setChanging(null)}
         />
       )}
       {removing && (
