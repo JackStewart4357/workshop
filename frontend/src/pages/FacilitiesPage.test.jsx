@@ -49,6 +49,8 @@ describe('FacilitiesPage', () => {
     expect(floors.map((floor) => floor.getAttribute('aria-label'))).toEqual(['Basement 1', 'Ground floor', 'Floor 2'])
     expect(within(floors[1]).getByText('GF-A01')).toBeInTheDocument()
     expect(within(floors[2]).getByText('No seats yet')).toBeInTheDocument()
+    expect(within(floors[1]).queryByText('No seats yet')).not.toBeInTheDocument()
+    expect(screen.queryByText('There are no buildings yet.')).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Riverside Annex' })).toBeInTheDocument()
   })
 
@@ -170,6 +172,7 @@ describe('FacilitiesPage', () => {
     })
     await user.click(screen.getByRole('button', { name: 'Edit Headquarters' }))
     const dialog = screen.getByRole('dialog', { name: 'Edit building' })
+    expect(within(dialog).getByLabelText(/name/i)).toHaveValue('Headquarters')
     expect(within(dialog).getByLabelText(/address/i)).toHaveValue('1 Acme Plaza, London')
     await user.clear(within(dialog).getByLabelText(/name/i))
     await user.type(within(dialog).getByLabelText(/name/i), 'Head Office')
@@ -350,5 +353,36 @@ describe('FacilitiesPage', () => {
 
     finish({ status: 201, body: { seat: { id: 's-2', floor_id: 'f-0', code: 'GF-A02' } } })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Add building' })).toBeEnabled())
+  })
+
+  it('holds the building form while it is being saved', async () => {
+    let finish
+    const { user } = await renderPage({
+      [`POST ${API}/buildings`]: () => new Promise((resolve) => (finish = resolve)),
+    })
+    await user.click(screen.getByRole('button', { name: 'Add building' }))
+    await user.type(screen.getByLabelText(/name/i), 'North Campus')
+    await user.type(screen.getByLabelText(/address/i), '9 Mill Lane, Leeds{Enter}')
+
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+
+    finish({ status: 201, body: {} })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('holds the confirmation while the removal is being sent', async () => {
+    let finish
+    const { user } = await renderPage({
+      [`DELETE ${API}/buildings/b-2`]: () => new Promise((resolve) => (finish = resolve)),
+    })
+    await user.click(screen.getByRole('button', { name: 'Remove Riverside Annex' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
+
+    finish({ status: 204 })
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
