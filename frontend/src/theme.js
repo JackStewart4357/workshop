@@ -15,6 +15,10 @@ const theme = createTheme({
   components: {
     MuiTextField: { defaultProps: { fullWidth: true, margin: 'normal' } },
     MuiButton: { defaultProps: { disableElevation: true } },
+    // Long names wrap instead of being cut off in a drop-down or pushing a page sideways on a phone
+    MuiMenuItem: { styleOverrides: { root: { whiteSpace: 'normal', overflowWrap: 'anywhere' } } },
+    MuiDialogTitle: { styleOverrides: { root: { overflowWrap: 'anywhere' } } },
+    MuiTypography: { styleOverrides: { h1: { overflowWrap: 'anywhere' } } },
   },
 })
 

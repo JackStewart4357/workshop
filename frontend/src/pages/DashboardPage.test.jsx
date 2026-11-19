@@ -56,9 +56,9 @@ beforeEach(() => {
       ],
     },
     by_assignee: [
-      { assignee_id: 'e-3', assignee: 'Lena Fischer', is_available: false, max_open_tickets: 3, open: 4 },
-      { assignee_id: 'e-2', assignee: 'Marco Rossi', is_available: true, max_open_tickets: 4, open: 4 },
-      { assignee_id: 'e-1', assignee: 'Priya Sharma', is_available: true, max_open_tickets: 5, open: 2 },
+      { assignee_id: 'e-3', assignee: 'Lena Fischer', is_available: false, is_active: true, max_open_tickets: 3, open: 4 },
+      { assignee_id: 'e-2', assignee: 'Marco Rossi', is_available: true, is_active: true, max_open_tickets: 4, open: 4 },
+      { assignee_id: 'e-1', assignee: 'Priya Sharma', is_available: true, is_active: true, max_open_tickets: 5, open: 2 },
     ],
     by_category: [
       { category_id: 'c-1', category: 'Electrical', type: 'FACILITY', count: 6 },
@@ -128,8 +128,8 @@ describe('DashboardPage', () => {
       expect(href('Blocked 1')).toBe('/incidents?status=BLOCKED')
       expect(href('Resolved 2')).toBe('/incidents?status=RESOLVED')
       expect(href('Closed 0')).toBe('/incidents?status=CLOSED')
-      expect(href('Unassigned 2 open, no engineer yet')).toBe('/incidents?assignee=none&status=OPEN')
-      expect(href('Escalated 0 still open')).toBe('/incidents?escalated=true')
+      expect(href('Unassigned 2 open, no engineer yet')).toBe('/incidents?assignee=none&open=true')
+      expect(href('Escalated 0 still open')).toBe('/incidents?escalated=true&open=true')
 
       expect(calls.map((call) => call.path)).toEqual([`${API}/summary`]) // an admin's page needs no list
       expect(screen.queryByRole('link', { name: 'Report incident' })).not.toBeInTheDocument()
@@ -156,12 +156,14 @@ describe('DashboardPage', () => {
       )
     })
 
-    it('says how many open incidents had an update their reporter could see, and lists the quiet ones', async () => {
+    it('says how many open incidents were reported or updated lately, and lists the quiet ones', async () => {
       await renderDashboard(USERS.admin)
       const informed = section('Keeping reporters informed')
       expect(
-        informed.getByText(/open incidents had an update their reporter could see in the last 3 days/),
-      ).toHaveTextContent('5 of 8 open incidents had an update their reporter could see in the last 3 days')
+        informed.getByText(/open incidents were reported, or had an update their reporter could see, in the last 3 days/),
+      ).toHaveTextContent(
+        '5 of 8 open incidents were reported, or had an update their reporter could see, in the last 3 days',
+      )
       // 5 of 8 is 62.5%: told as a whole percentage
       expect(informed.getByRole('progressbar', { name: 'Open incidents with a recent update' })).toHaveAttribute(
         'aria-valuenow',
@@ -174,18 +176,18 @@ describe('DashboardPage', () => {
       expect(light).toHaveTextContent('Flickering light in the lobbyOpenUnassigned, no update yet')
       expect(printer).toHaveTextContent('Printer jams on floor 1In progressPriya Sharma, last update 12 Nov 2026')
       expect(informed.getByText('and 1 more')).toBeInTheDocument() // three are quiet, two are listed
-      expect(informed.queryByText('Every open incident has had a recent update.')).not.toBeInTheDocument()
+      expect(informed.queryByText('No open incident has been quiet for 3 days or more.')).not.toBeInTheDocument()
     })
 
-    it('says so when every open incident has had a recent update', async () => {
+    it('says so when no open incident has been quiet', async () => {
       summary.kept_informed = { ...summary.kept_informed, quiet: 0, quietest: [] }
       await renderDashboard(USERS.admin)
       const informed = section('Keeping reporters informed')
-      expect(informed.getByText(/open incidents had an update/)).toHaveTextContent('8 of 8 open incidents')
+      expect(informed.getByText(/open incidents were reported, or had an update/)).toHaveTextContent('8 of 8 open incidents')
       expect(informed.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
-      expect(informed.getByText('Every open incident has had a recent update.')).toBeInTheDocument()
+      expect(informed.getByText('No open incident has been quiet for 3 days or more.')).toBeInTheDocument()
       expect(informed.queryAllByRole('listitem')).toEqual([])
-      expect(informed.queryByText(/been quiet for 3 days/)).not.toBeInTheDocument()
+      expect(informed.queryByText(/ha(s|ve) been quiet for 3 days or more:/)).not.toBeInTheDocument() // the list's lead-in
     })
 
     it('names a single quiet incident in the singular, and adds no "more" when all are listed', async () => {
@@ -235,13 +237,28 @@ describe('DashboardPage', () => {
       expect(await screen.findByRole('tooltip')).toHaveTextContent('6 of 12 (50%)')
     })
 
+    it('marks an engineer whose account is deactivated as that, whatever their availability says', async () => {
+      summary.by_assignee = [
+        { ...summary.by_assignee[0], is_active: false }, // Lena: unavailable and deactivated
+        { ...summary.by_assignee[1], is_active: false }, // Marco: still flagged available, but cannot sign in
+      ]
+      await renderDashboard(USERS.admin)
+      const work = section('Work across engineers')
+      const row = (name) => within(work.getByRole('link', { name }).parentElement)
+      for (const name of ['Lena Fischer', 'Marco Rossi']) {
+        expect(row(name).getByText('Deactivated')).toBeInTheDocument()
+        expect(row(name).queryByText('Unavailable')).not.toBeInTheDocument()
+      }
+    })
+
     it('shows how work is spread across the engineers and who is unavailable', async () => {
       await renderDashboard(USERS.admin)
       const work = section('Work across engineers')
       expect(work.getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-        ['Lena Fischer', '/incidents?assignee=e-3'],
-        ['Marco Rossi', '/incidents?assignee=e-2'],
-        ['Priya Sharma', '/incidents?assignee=e-1'],
+        // "N open" beside each name counts incidents still needing work, so the link opens just those
+        ['Lena Fischer', '/incidents?assignee=e-3&open=true'],
+        ['Marco Rossi', '/incidents?assignee=e-2&open=true'],
+        ['Priya Sharma', '/incidents?assignee=e-1&open=true'],
       ])
       const row = (name) => within(work.getByRole('link', { name }).parentElement)
       const bar = (name) => work.getByRole('progressbar', { name: `Workload of ${name}` })
@@ -260,6 +277,7 @@ describe('DashboardPage', () => {
       expect(bar('Priya Sharma')).toHaveAttribute('aria-valuenow', '40')
       expect(bar('Priya Sharma')).toHaveClass('MuiLinearProgress-colorPrimary')
       expect(work.queryByText('There are no engineers yet.')).not.toBeInTheDocument()
+      expect(work.queryByText('Deactivated')).not.toBeInTheDocument()
     })
 
     it('ranks the categories, most common first, each marked facility or technology and linked to its list', async () => {

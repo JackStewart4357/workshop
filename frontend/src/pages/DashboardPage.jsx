@@ -197,7 +197,7 @@ function IncidentRows({ incidents, withPriority = false }) {
 
 /**
  * How well the people who report incidents are kept up to date: how many open incidents
- * had an update their reporter could see lately, which have gone quiet, and how the
+ * were reported or had an update their reporter could see lately, which have gone quiet, and how the
  * finished ones ended. "An update" is a status change or a public note from someone else.
  */
 function KeptInformed({ informed }) {
@@ -212,7 +212,7 @@ function KeptInformed({ informed }) {
             <strong>
               {open - quiet} of {open}
             </strong>{' '}
-            open incidents had an update their reporter could see in the last 3 days
+            open incidents were reported, or had an update their reporter could see, in the last 3 days
           </Typography>
           <LinearProgress
             variant="determinate"
@@ -222,7 +222,7 @@ function KeptInformed({ informed }) {
           />
           {quiet === 0 ? (
             <Typography color="text.secondary" sx={{ mt: 1.5 }}>
-              Every open incident has had a recent update.
+              No open incident has been quiet for 3 days or more.
             </Typography>
           ) : (
             <>
@@ -333,13 +333,13 @@ function AdminDashboard({ summary }) {
           label="Unassigned"
           value={summary.unassigned_open}
           caption="open, no engineer yet"
-          to="/incidents?assignee=none&status=OPEN"
+          to="/incidents?assignee=none&open=true"
         />
         <StatTile
           label="Escalated"
           value={summary.escalated_open}
           caption="still open"
-          to="/incidents?escalated=true"
+          to="/incidents?escalated=true&open=true"
         />
       </Box>
       <Section title="Needs attention">
@@ -360,7 +360,7 @@ function AdminDashboard({ summary }) {
                 </Link>
                 <StatusChip status={incident.status} />
                 {incident.is_escalated && <Chip size="small" color="error" variant="outlined" label="Escalated" />}
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: 0, overflowWrap: 'anywhere' }}>
                   {incident.assignee ?? 'Unassigned'}
                 </Typography>
               </Box>
@@ -414,12 +414,16 @@ function AdminDashboard({ summary }) {
                 <Stack direction="row" sx={{ alignItems: 'center', flexWrap: 'wrap', columnGap: 1 }}>
                   <Link
                     component={RouterLink}
-                    to={`/incidents?assignee=${engineer.assignee_id}`}
+                    to={`/incidents?assignee=${engineer.assignee_id}&open=true`}
                     sx={{ minWidth: 0, overflowWrap: 'anywhere' }}
                   >
                     {engineer.assignee}
                   </Link>
-                  {!engineer.is_available && <Chip size="small" label="Unavailable" />}
+                  {engineer.is_active === false ? (
+                    <Chip size="small" label="Deactivated" />
+                  ) : (
+                    !engineer.is_available && <Chip size="small" label="Unavailable" />
+                  )}
                   <Typography color="text.secondary" sx={{ ml: 'auto' }}>
                     {engineer.open} of {engineer.max_open_tickets} open{full && ' (at capacity)'}
                   </Typography>

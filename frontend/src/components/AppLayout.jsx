@@ -104,6 +104,8 @@ export default function AppLayout() {
       {isMobile ? (
         <Drawer open={menuOpen} onClose={() => setMenuOpen(false)} ModalProps={{ keepMounted: true }}>
           <Box sx={{ width: DRAWER_WIDTH }}>
+            {/* The fixed top bar covers this much of the drawer: without the spacer the name hides behind it */}
+            <Toolbar />
             <Toolbar>
               <Typography noWrap>{user.full_name}</Typography>
             </Toolbar>

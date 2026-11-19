@@ -127,6 +127,7 @@ FILTERS = {
     "building_id": optional(clean_uuid("Building")),
     "assignee": optional(clean_assignee),
     "escalated": optional(clean_choice("Escalated", ("true",))),
+    "open": optional(clean_choice("Open", ("true",))),
     "q": optional(clean_text("Search", 100)),
 }
 
@@ -256,11 +257,18 @@ def list_incidents(event, user):
         params.append(filters["assignee"])
     if filters["escalated"]:
         where += " AND i.is_escalated"
+    if filters["open"]:  # still needing work: what the dashboard's "open" numbers count
+        where += f" AND {STILL_OPEN}"
     if filters["q"]:
         # % and _ mean "anything" to ILIKE: escaped, so a search for "50%" finds just that
         pattern = "%" + re.sub(r"([\\%_])", r"\\\1", filters["q"]) + "%"
-        where += " AND (i.title ILIKE %s OR i.description ILIKE %s)"
-        params += [pattern, pattern]
+        # Everything a row shows in words: what, where, who and why
+        searched = (
+            "i.title", "i.description", "i.blocked_reason", "i.escalation_reason", "c.name", "b.name", "s.code",
+            "r.full_name", "au.full_name",
+        )  # fmt: skip
+        where += " AND (" + " OR ".join(f"{column} ILIKE %s" for column in searched) + ")"
+        params += [pattern] * len(searched)
     incidents = query_all(f"SELECT {COLUMNS}{FROM} WHERE {where} ORDER BY i.created_at DESC, i.id LIMIT 200", params)
     return respond(200, {"incidents": incidents})
 
@@ -310,7 +318,7 @@ def summary(_event, user):
             "ORDER BY i.updated_at, i.id LIMIT 10"
         )
         by_assignee = query_all(  # how work is spread across the engineers
-            "SELECT p.id AS assignee_id, u.full_name AS assignee, p.is_available, p.max_open_tickets, "
+            "SELECT p.id AS assignee_id, u.full_name AS assignee, p.is_available, u.is_active, p.max_open_tickets, "
             f"(SELECT count(*) FROM incidents i WHERE i.assignee_id = p.id AND {STILL_OPEN}) AS open "
             "FROM engineer_profiles p JOIN users u ON u.id = p.user_id ORDER BY u.full_name, u.email"
         )

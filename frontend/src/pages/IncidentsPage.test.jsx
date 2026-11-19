@@ -266,6 +266,37 @@ describe('IncidentsPage', () => {
     },
   )
 
+  it.each([USERS.employee, USERS.engineer, USERS.admin])(
+    'lets $role keep only the incidents that still need work, kept in the address like the other filters',
+    async (who) => {
+      const { calls, user } = await renderPage({ user: who })
+      const open = screen.getByRole('switch', { name: 'Still open only' })
+      expect(open).not.toBeChecked()
+      await user.click(open)
+      await waitFor(() => expect(asked(calls)).toEqual([{}, { open: 'true' }]))
+      expect(open).toBeChecked()
+
+      await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+      await waitFor(() => expect(asked(calls)).toEqual([{}, { open: 'true' }, {}]))
+      expect(screen.getByRole('switch', { name: 'Still open only' })).not.toBeChecked()
+    },
+  )
+
+  it('starts from the filters a dashboard link carries: one engineer\'s incidents that are still open', async () => {
+    const { calls } = await renderPage({ route: '/incidents?assignee=e-1&open=true', user: USERS.admin })
+    expect(asked(calls)).toEqual([{ assignee: 'e-1', open: 'true' }])
+    expect(screen.getByRole('switch', { name: 'Still open only' })).toBeChecked()
+    expect(screen.getByRole('switch', { name: 'Escalated only' })).not.toBeChecked()
+  })
+
+  it('says what the search box looks through', async () => {
+    await renderPage()
+    expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveAttribute(
+      'placeholder',
+      'Title, description, place, person or reason',
+    )
+  })
+
   it('starts with "Escalated only" on when the address says so, as the dashboard link does', async () => {
     const { calls } = await renderPage({ route: '/incidents?escalated=true' })
     expect(asked(calls)).toEqual([{ escalated: 'true' }])

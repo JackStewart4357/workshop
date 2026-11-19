@@ -28,7 +28,7 @@ import { useServerList } from '../utils/useServerList.js'
 
 // The filters, by the names the API gives them. They live in the page address, so a
 // reload, the Back button and a shared link all show the same list.
-const FILTERS = ['q', 'status', 'priority', 'category_id', 'building_id', 'assignee', 'escalated']
+const FILTERS = ['q', 'status', 'priority', 'category_id', 'building_id', 'assignee', 'escalated', 'open']
 const SEARCH_PAUSE = 400 // milliseconds without typing before a search is sent
 const LIST_LIMIT = 200 // the most the API returns
 
@@ -110,7 +110,7 @@ function SearchBox({ value, onSearch }) {
         type="search"
         size="small"
         margin="none"
-        placeholder="Words in the title or description"
+        placeholder="Title, description, place, person or reason"
         value={text}
         onChange={(event) => setText(event.target.value)}
         slotProps={{ inputLabel: { shrink: true }, htmlInput: { maxLength: 100 } }}
@@ -239,6 +239,15 @@ export default function IncidentsPage() {
             <Switch
               checked={filters.escalated === 'true'}
               onChange={(event) => setFilter('escalated', event.target.checked ? 'true' : '')}
+            />
+          }
+        />
+        <FormControlLabel
+          label="Still open only" // not resolved or closed: what the dashboard's "open" numbers count
+          control={
+            <Switch
+              checked={filters.open === 'true'}
+              onChange={(event) => setFilter('open', event.target.checked ? 'true' : '')}
             />
           }
         />

@@ -434,6 +434,23 @@ describe('IncidentDetailPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('"Close without work" is final and asks why; the reason goes with the change', async () => {
+    incident = { ...incident, status: 'OPEN', next_statuses: ['IN_PROGRESS', 'CLOSED'], is_staff: true }
+    const { calls, user } = await renderPage({ user: USERS.admin })
+    await user.click(screen.getByRole('button', { name: 'Close without work' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Close without work?' }))
+    expect(dialog.getByText(/A closed incident is final/)).toBeInTheDocument()
+
+    await user.click(dialog.getByRole('button', { name: 'Close without work' }))
+    expect(dialog.getByText('Say why it is being closed')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([])
+
+    await write(user, dialog.getByRole('textbox', { name: /Why is it being closed without work\?/ }), ' Duplicate of the lift incident ')
+    await user.click(dialog.getByRole('button', { name: 'Close without work' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(writes(calls)[0].body).toEqual({ status: 'CLOSED', reason: 'Duplicate of the lift incident' })
+  })
+
   it('shows why a move without a dialog was refused, and reloads', async () => {
     incident = { ...incident, status: 'OPEN', next_statuses: ['IN_PROGRESS', 'CLOSED'] }
     const { calls, user } = await renderPage({
@@ -543,7 +560,8 @@ describe('IncidentDetailPage', () => {
     incident = { ...incident, status, next_statuses: [] }
     const { calls } = await renderPage({ user })
     expect(screen.queryByRole('region', { name: 'Manage' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Delete incident' })).not.toBeInTheDocument()
+    // Removing it stays possible for an admin after it is closed; nobody else is ever offered it
+    expect(screen.queryAllByRole('button', { name: 'Delete incident' })).toHaveLength(user === USERS.admin ? 1 : 0)
     // Only an admin's page asks for the engineers
     expect(calls.some((call) => call.path === '/api/engineers/profiles')).toBe(user === USERS.admin)
   })
@@ -559,6 +577,17 @@ describe('IncidentDetailPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete incident' }))
     dialog = within(screen.getByRole('dialog'))
+    await user.click(dialog.getByRole('button', { name: 'Remove' }))
+
+    expect(await screen.findByText('The list of incidents')).toBeInTheDocument()
+    expect(writes(calls)).toEqual([{ method: 'DELETE', path: TICKET, token: undefined, body: undefined }])
+  })
+
+  it('lets an admin delete an incident that is already closed', async () => {
+    incident = { ...incident, status: 'CLOSED', next_statuses: [] }
+    const { calls, user } = await renderPage({ user: USERS.admin })
+    await user.click(screen.getByRole('button', { name: 'Delete incident' }))
+    const dialog = within(screen.getByRole('dialog', { name: 'Remove this incident?' }))
     await user.click(dialog.getByRole('button', { name: 'Remove' }))
 
     expect(await screen.findByText('The list of incidents')).toBeInTheDocument()

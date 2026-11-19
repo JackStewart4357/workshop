@@ -948,6 +948,7 @@ def load(desk, who, tickets):
         "assignee_id": engineer["profile"],
         "assignee": engineer["name"],
         "is_available": True,
+        "is_active": True,
         "max_open_tickets": 5,
         "open": tickets,
     }
@@ -1178,6 +1179,51 @@ def test_the_admin_summary_lists_at_most_ten_needing_attention_longest_waiting_f
         db.query("UPDATE incidents SET updated_at = now() - %s * interval '1 hour' WHERE id = %s", (number, incident["id"]), fetch=False)
     waiting = desk.call("admin", "GET", "/summary")[1]["needs_attention"]
     assert [row["title"] for row in waiting] == [f"Flood {number:02}" for number in range(11, 1, -1)]
+
+
+# --- found by the review of every MVP ----------------------------------------------------
+
+
+def test_the_list_can_be_narrowed_to_incidents_that_still_need_work(desk):
+    for status in ("OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED", "CLOSED"):
+        desk.at(status, title=status.title()) if status != "OPEN" else desk.report(title="Open")
+    assert set(desk.titles("admin", open="true")) == {"Open", "In_Progress", "Blocked"}
+    assert len(desk.titles("admin", open="")) == 5  # blank means not asked for
+    assert desk.titles("admin", open="true", status="RESOLVED") == []
+    status, body = desk.call("admin", "GET", "/tickets", query={"open": "yes"})
+    assert (status, body["error"]["details"]) == (400, {"open": "Open must be one of: true"})
+
+
+def test_search_finds_everything_a_row_says_in_words(desk):
+    site = desk.site
+    plain = desk.report(title="Plain")
+    annex = desk.report("other_employee", title="Elsewhere", building_id=site["annex"], floor_id=site["annex_floor"],
+                        seat_id=site["annex_seat"], category_id=site["network"])  # fmt: skip
+    worked = desk.at("BLOCKED", title="Worked on")  # the helper blocks it with "Waiting for a part"
+    desk.call("reporter", "POST", f"/tickets/{plain['id']}/escalate", body={"reason": "Pangolin in the lobby"})
+
+    def found(text):
+        return set(desk.titles("admin", q=text))
+
+    assert found("network") == {"Elsewhere"}  # category
+    assert found("annex") == {"Elsewhere"}  # building
+    assert found("gf-r01") == {"Elsewhere"}  # seat code
+    assert found(desk.cast["other_employee"]["name"]) == {"Elsewhere"}  # who reported it
+    assert found(desk.cast["engineer"]["name"]) == {"Worked on"}  # who is working on it
+    assert found("waiting for a part") == {"Worked on"}  # why it is blocked
+    assert found("pangolin") == {"Plain"}  # why it was escalated
+    assert (annex["id"], worked["id"]) != (None, None)
+    # ...and still only among the incidents the person may see
+    assert set(desk.titles("reporter", q="annex")) == set()
+
+
+def test_the_admin_summary_says_which_engineers_are_deactivated(desk):
+    db.query("UPDATE users SET is_active = FALSE WHERE id = %s", (desk.cast["other_engineer"]["id"],), fetch=False)
+    rows = desk.call("admin", "GET", "/summary")[1]["by_assignee"]
+    assert {row["assignee"]: row["is_active"] for row in rows} == {
+        desk.cast["engineer"]["name"]: True,
+        desk.cast["other_engineer"]["name"]: False,
+    }
 
 
 # --- keeping reporters informed --------------------------------------------------------

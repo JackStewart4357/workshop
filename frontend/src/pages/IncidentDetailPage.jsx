@@ -50,7 +50,12 @@ import {
 // is offered (`next_statuses`); this only words them.
 const MOVES = {
   'OPEN>IN_PROGRESS': { label: 'Start work' },
-  'OPEN>CLOSED': { label: 'Close without work', final: true },
+  'OPEN>CLOSED': {
+    label: 'Close without work',
+    final: true,
+    ask: 'Why is it being closed without work?',
+    missing: 'Say why it is being closed',
+  },
   'IN_PROGRESS>BLOCKED': { label: 'Mark as blocked', ask: 'What is blocking it?', missing: 'Say what is blocking it' },
   'IN_PROGRESS>RESOLVED': { label: 'Mark as resolved' },
   'BLOCKED>IN_PROGRESS': { label: 'Resume work' },
@@ -102,12 +107,13 @@ function MoveDialog({ move, onMove, onClose }) {
         <DialogTitle id="move-dialog-title">{move.label}?</DialogTitle>
         <DialogContent>
           {formError && <Alert severity="error">{formError}</Alert>}
-          {move.ask ? (
-            <TextField label={move.ask} inputRef={focusOnOpen} required multiline minRows={2} {...field('reason')} />
-          ) : (
+          {move.final && (
             <DialogContentText>
               A closed incident is final: it cannot be reopened or changed, and takes no more notes.
             </DialogContentText>
+          )}
+          {move.ask && (
+            <TextField label={move.ask} inputRef={focusOnOpen} required multiline minRows={2} {...field('reason')} />
           )}
         </DialogContent>
         <DialogActions>
@@ -144,7 +150,14 @@ function EditDialog({ incident, note, onSave, onClose }) {
 
   return (
     <Dialog open onClose={saving ? undefined : onClose} fullWidth maxWidth="sm" aria-labelledby="edit-dialog-title">
-      <Box component="form" ref={formRef} noValidate onSubmit={handleSubmit}>
+      <Box
+        component="form"
+        ref={formRef}
+        noValidate
+        onSubmit={handleSubmit}
+        // The fields scroll between the title and the buttons, so Save stays in view with long text
+        sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
         <DialogTitle id="edit-dialog-title">{note ? 'Edit note' : 'Edit incident'}</DialogTitle>
         <DialogContent>
           {formError && <Alert severity="error">{formError}</Alert>}
@@ -393,6 +406,14 @@ export default function IncidentDetailPage() {
       to === ESCALATE.to ? incidents.escalateIncident(incident.id, reason) : incidents.changeStatus(incident.id, to, reason),
     )
 
+  const askDelete = () =>
+    setRemoving({
+      what: 'this incident',
+      note: 'Its notes and history are removed with it.',
+      // Leave first: the reload that follows every change would find nothing here
+      run: () => incidents.removeIncident(incident.id).then(() => navigate('/incidents')),
+    })
+
   // "Escalated by Alice Johnson on 19 Nov 2026, 08:00"; the name is missing if that account is gone
   const escalation = [
     'Escalated',
@@ -519,15 +540,14 @@ export default function IncidentDetailPage() {
           engineers={engineers}
           busy={busy}
           onSave={(priority, assigneeId) => change(() => incidents.updateIncident(incident.id, priority, assigneeId))}
-          onDelete={() =>
-            setRemoving({
-              what: 'this incident',
-              note: 'Its notes and history are removed with it.',
-              // Leave first: the reload that follows every change would find nothing here
-              run: () => incidents.removeIncident(incident.id).then(() => navigate('/incidents')),
-            })
-          }
+          onDelete={askDelete}
         />
+      )}
+      {isAdmin && incident.status === 'CLOSED' && (
+        // A closed incident cannot be managed any more, but an admin can still remove it
+        <Button color="error" onClick={askDelete} disabled={busy} sx={{ alignSelf: 'flex-start' }}>
+          Delete incident
+        </Button>
       )}
 
       {feedback?.given && (
