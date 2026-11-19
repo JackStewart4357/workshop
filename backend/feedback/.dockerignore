@@ -1,0 +1,10 @@
+# The image needs only the service's own files and the shared modules: keep the pip
+# packages installed here for the Lambda out of the build context.
+*
+!Dockerfile
+!requirements.txt
+!function.py
+!server.py
+!db.py
+!http_utils.py
+!security.py

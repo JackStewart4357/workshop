@@ -34,6 +34,18 @@ try {
   process.exit(1);
 }
 
+// A service can be served from somewhere other than its LocalStack Lambda: bin/deploy-minikube.sh
+// writes {"feedback": "http://<minikube ip>:30080"} here, and deleting the file switches back.
+// Read on every request, so neither needs a proxy restart.
+const overridesFile = path.join(__dirname, '.proxy-overrides.json');
+function currentEndpoints() {
+  try {
+    return { ...endpoints, ...JSON.parse(fs.readFileSync(overridesFile, 'utf8')) };
+  } catch {
+    return endpoints; // no overrides file, or one being rewritten
+  }
+}
+
 const server = http.createServer((req, res) => {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -66,7 +78,7 @@ const server = http.createServer((req, res) => {
 
   const endpointName = pathParts[1];
   const remainingPath = pathParts.length > 2 ? '/' + pathParts.slice(2).join('/') : '';
-  const targetUrl = endpoints[endpointName] + remainingPath + (parsedUrl.search || '');
+  const targetUrl = currentEndpoints()[endpointName] + remainingPath + (parsedUrl.search || '');
 
   if (!targetUrl) {
     res.writeHead(404, { 'Content-Type': 'application/json' });

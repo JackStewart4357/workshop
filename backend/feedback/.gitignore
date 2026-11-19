@@ -7,3 +7,5 @@
 !/function.py
 !/Dockerfile
 !/server.py
+!/k8s.yaml
+!/.dockerignore

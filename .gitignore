@@ -259,3 +259,6 @@ tfplan
 
 # Local dev script output (may contain tokens)
 start.txt
+
+# Written by bin/deploy-minikube.sh: where the local proxy sends a service instead of LocalStack
+bin/.proxy-overrides.json

@@ -1,0 +1,74 @@
+# The feedback service on Kubernetes (minikube): the image the Dockerfile beside this file
+# builds, run as one pod behind a service. Applied by bin/deploy-minikube.sh, which builds
+# the image inside minikube first and creates the feedback-db secret.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feedback
+  labels:
+    app: feedback
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feedback
+  template:
+    metadata:
+      labels:
+        app: feedback
+    spec:
+      containers:
+        - name: feedback
+          image: acme-feedback:local
+          imagePullPolicy: Never # built into minikube's own image store, never pulled
+          ports:
+            - containerPort: 8080
+          env:
+            - name: IS_LOCAL # the local PostgreSQL has no SSL
+              value: "true"
+            - name: POSTGRES_HOST # the workstation's PostgreSQL: the gateway of Docker's default network
+              value: "172.17.0.1"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_NAME
+              value: postgres
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: feedback-db
+                  key: password
+          readinessProbe: # GET / is the service's health answer
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534 # "nobody", as in the Dockerfile
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feedback
+spec:
+  type: NodePort
+  selector:
+    app: feedback
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30080 # reached from the workstation as http://<minikube ip>:30080
