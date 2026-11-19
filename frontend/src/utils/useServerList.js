@@ -20,7 +20,14 @@ export function useServerList(fetchItems) {
   const [removing, setRemoving] = useState(null)
 
   const load = useCallback(
-    () => fetchItems().then(setItems, (failure) => setLoadError(failure.message)),
+    () =>
+      fetchItems().then(
+        (found) => {
+          setItems(found)
+          setLoadError('') // a load that worked replaces an earlier failure
+        },
+        (failure) => setLoadError(failure.message),
+      ),
     [fetchItems],
   )
   useEffect(() => {

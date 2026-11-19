@@ -16,6 +16,7 @@ const EMPTY_DASHBOARD = {
       unassigned_open: 0,
       escalated_open: 0,
       needs_attention: [],
+      kept_informed: { open: 0, quiet: 0, awaiting_confirmation: 0, closed: 0, confirmed_by_reporter: 0, quietest: [] },
       by_assignee: [],
       by_category: [],
       by_location: { buildings: [], floors: [], seats: [] },

@@ -641,6 +641,7 @@ describe('IncidentDetailPage', () => {
     const { calls, user } = await asReporter()
     const box = section('Feedback')
     expect(box.getByText("Only the engineer's manager will see this.")).toBeInTheDocument()
+    expect(box.getByRole('radiogroup', { name: 'How well was it handled? *' })).toBeInTheDocument()
 
     await user.click(box.getByRole('button', { name: 'Send feedback' }))
     expect(box.getByRole('alert')).toHaveTextContent('Choose a rating from 1 to 5 stars')
@@ -708,5 +709,14 @@ describe('IncidentDetailPage', () => {
     const { calls } = await renderPage({ user })
     expect(calls.some((call) => call.path === FEEDBACK)).toBe(false)
     expect(screen.queryByRole('region', { name: 'Feedback' })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['closed without ever being resolved', null, 2],
+    ['resolved and then closed', LATER, 0],
+  ])('an incident %s shows the steps in between as skipped or not', async (_how, resolvedAt, skipped) => {
+    incident = { ...incident, status: 'CLOSED', resolved_at: resolvedAt, next_statuses: [] }
+    await renderPage()
+    expect(section('Progress').queryAllByText('Skipped')).toHaveLength(skipped)
   })
 })

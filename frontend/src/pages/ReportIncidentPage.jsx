@@ -92,7 +92,13 @@ function ReportForm({ categories, buildings }) {
             </MenuItem>
           ))}
         </TextField>
-        <TextField select label="Building" required {...field('building_id')} onChange={handlePlace}>
+        <TextField
+          select
+          label="Building"
+          required
+          {...field('building_id', buildings.length ? '' : 'There are no buildings yet. A facility admin adds them under Facilities.')}
+          onChange={handlePlace}
+        >
           {buildings.map((building) => (
             <MenuItem key={building.id} value={building.id}>
               {building.name}
@@ -102,7 +108,7 @@ function ReportForm({ categories, buildings }) {
         <TextField
           select
           label="Floor"
-          {...field('floor_id', values.building_id ? 'Optional' : 'Choose a building first')}
+          {...field('floor_id', !values.building_id ? 'Choose a building first' : floors.length ? 'Optional' : 'This building has no floors listed')}
           onChange={handlePlace}
           disabled={saving || floors.length === 0}
         >
@@ -116,7 +122,7 @@ function ReportForm({ categories, buildings }) {
         <TextField
           select
           label="Seat"
-          {...field('seat_id', values.floor_id ? 'Optional' : 'Choose a floor first')}
+          {...field('seat_id', !values.floor_id ? 'Choose a floor first' : seats.length ? 'Optional' : 'This floor has no seats listed')}
           disabled={saving || seats.length === 0}
         >
           <MenuItem value="">Not at a seat</MenuItem>

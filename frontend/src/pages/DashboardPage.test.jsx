@@ -38,6 +38,23 @@ beforeEach(() => {
         assignee: null,
       },
     ],
+    kept_informed: {
+      open: 8,
+      quiet: 3,
+      awaiting_confirmation: 2,
+      closed: 0,
+      confirmed_by_reporter: 0,
+      quietest: [
+        { id: 'i-9', title: 'Flickering light in the lobby', status: 'OPEN', last_heard: null, assignee: null },
+        {
+          id: 'i-3',
+          title: 'Printer jams on floor 1',
+          status: 'IN_PROGRESS',
+          last_heard: '2026-11-12T12:00:00+00:00',
+          assignee: 'Priya Sharma',
+        },
+      ],
+    },
     by_assignee: [
       { assignee_id: 'e-3', assignee: 'Lena Fischer', is_available: false, max_open_tickets: 3, open: 4 },
       { assignee_id: 'e-2', assignee: 'Marco Rossi', is_available: true, max_open_tickets: 4, open: 4 },
@@ -111,7 +128,7 @@ describe('DashboardPage', () => {
       expect(href('Blocked 1')).toBe('/incidents?status=BLOCKED')
       expect(href('Resolved 2')).toBe('/incidents?status=RESOLVED')
       expect(href('Closed 0')).toBe('/incidents?status=CLOSED')
-      expect(href('Unassigned 2 open, no engineer yet')).toBe('/incidents?assignee=none')
+      expect(href('Unassigned 2 open, no engineer yet')).toBe('/incidents?assignee=none&status=OPEN')
       expect(href('Escalated 0 still open')).toBe('/incidents?escalated=true')
 
       expect(calls.map((call) => call.path)).toEqual([`${API}/summary`]) // an admin's page needs no list
@@ -139,6 +156,61 @@ describe('DashboardPage', () => {
       )
     })
 
+    it('says how many open incidents had an update their reporter could see, and lists the quiet ones', async () => {
+      await renderDashboard(USERS.admin)
+      const informed = section('Keeping reporters informed')
+      expect(
+        informed.getByText(/open incidents had an update their reporter could see in the last 3 days/),
+      ).toHaveTextContent('5 of 8 open incidents had an update their reporter could see in the last 3 days')
+      // 5 of 8 is 62.5%: told as a whole percentage
+      expect(informed.getByRole('progressbar', { name: 'Open incidents with a recent update' })).toHaveAttribute(
+        'aria-valuenow',
+        '63',
+      )
+      expect(informed.getByText('3 have been quiet for 3 days or more:')).toBeInTheDocument()
+      expect(titles('Keeping reporters informed')).toEqual(['Flickering light in the lobby', 'Printer jams on floor 1'])
+      const [light, printer] = informed.getAllByRole('listitem')
+      expect(within(light).getByRole('link')).toHaveAttribute('href', '/incidents/i-9')
+      expect(light).toHaveTextContent('Flickering light in the lobbyOpenUnassigned, no update yet')
+      expect(printer).toHaveTextContent('Printer jams on floor 1In progressPriya Sharma, last update 12 Nov 2026')
+      expect(informed.getByText('and 1 more')).toBeInTheDocument() // three are quiet, two are listed
+      expect(informed.queryByText('Every open incident has had a recent update.')).not.toBeInTheDocument()
+    })
+
+    it('says so when every open incident has had a recent update', async () => {
+      summary.kept_informed = { ...summary.kept_informed, quiet: 0, quietest: [] }
+      await renderDashboard(USERS.admin)
+      const informed = section('Keeping reporters informed')
+      expect(informed.getByText(/open incidents had an update/)).toHaveTextContent('8 of 8 open incidents')
+      expect(informed.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+      expect(informed.getByText('Every open incident has had a recent update.')).toBeInTheDocument()
+      expect(informed.queryAllByRole('listitem')).toEqual([])
+      expect(informed.queryByText(/been quiet for 3 days/)).not.toBeInTheDocument()
+    })
+
+    it('names a single quiet incident in the singular, and adds no "more" when all are listed', async () => {
+      summary.kept_informed = { ...summary.kept_informed, quiet: 1, quietest: [summary.kept_informed.quietest[0]] }
+      await renderDashboard(USERS.admin)
+      const informed = section('Keeping reporters informed')
+      expect(informed.getByText('1 has been quiet for 3 days or more:')).toBeInTheDocument()
+      expect(informed.getAllByRole('listitem')).toHaveLength(1)
+      expect(informed.queryByText(/^and \d+ more$/)).not.toBeInTheDocument()
+    })
+
+    it('tells how incidents end: waiting for the reporter to confirm, and confirmed by them', async () => {
+      await renderDashboard(USERS.admin)
+      expect(href('2 resolved, waiting for the reporter to confirm')).toBe('/incidents?status=RESOLVED')
+      expect(section('Keeping reporters informed').getByText('No incidents have been closed yet.')).toBeInTheDocument()
+    })
+
+    it('tells how many closed incidents their reporter confirmed', async () => {
+      summary.kept_informed = { ...summary.kept_informed, closed: 4, confirmed_by_reporter: 3 }
+      await renderDashboard(USERS.admin)
+      const informed = section('Keeping reporters informed')
+      expect(informed.getByText('3 of 4 closed incidents were confirmed by their reporter')).toBeInTheDocument()
+      expect(informed.queryByText('No incidents have been closed yet.')).not.toBeInTheDocument()
+    })
+
     it('shows incidents by priority, most urgent first, as bars on one scale with their numbers', async () => {
       await renderDashboard(USERS.admin)
       const priorities = section('Incidents by priority')
@@ -152,9 +224,9 @@ describe('DashboardPage', () => {
       expect(row('Critical')).toHaveTextContent(/^Critical1$/)
       expect(row('Medium')).toHaveTextContent(/^Medium6$/)
       // The longest bar fills the row and the others are drawn against it
-      expect(getComputedStyle(priorities.getByTestId('bar-MEDIUM')).flexBasis).toBe('100%')
-      expect(getComputedStyle(priorities.getByTestId('bar-HIGH')).flexBasis).toBe('50%')
-      expect(parseFloat(getComputedStyle(priorities.getByTestId('bar-CRITICAL')).flexBasis)).toBeCloseTo(16.67, 1)
+      expect(getComputedStyle(priorities.getByTestId('bar-MEDIUM')).flexGrow).toBe('1')
+      expect(getComputedStyle(priorities.getByTestId('bar-HIGH')).flexGrow).toBe('0.5')
+      expect(parseFloat(getComputedStyle(priorities.getByTestId('bar-CRITICAL')).flexGrow)).toBeCloseTo(0.1667, 3)
     })
 
     it('tells the share of each priority on hover', async () => {
@@ -226,6 +298,7 @@ describe('DashboardPage', () => {
         unassigned_open: 0,
         escalated_open: 0,
         needs_attention: [],
+        kept_informed: { open: 0, quiet: 0, awaiting_confirmation: 0, closed: 0, confirmed_by_reporter: 0, quietest: [] },
         by_assignee: [],
         by_category: [],
         by_location: { buildings: [], floors: [], seats: [] },
@@ -234,10 +307,14 @@ describe('DashboardPage', () => {
       await renderDashboard(USERS.admin)
       expect(section('Needs attention').getByText('Nothing is blocked or escalated.')).toBeInTheDocument()
       expect(section('Needs attention').queryAllByRole('listitem')).toEqual([])
+      const informed = section('Keeping reporters informed')
+      expect(informed.getByText('There are no open incidents.')).toBeInTheDocument()
+      expect(informed.queryByRole('progressbar')).not.toBeInTheDocument() // no share of nothing
+      expect(informed.getByText('No incidents have been closed yet.')).toBeInTheDocument()
       expect(section('Most common categories').getByText('No incidents have been reported yet.')).toBeInTheDocument()
       expect(section('Where incidents recur').getByText('No incident names one of the seats yet.')).toBeInTheDocument()
       expect(href('All incidents 0')).toBe('/incidents')
-      expect(getComputedStyle(screen.getByTestId('bar-CRITICAL')).flexBasis).toBe('0%')
+      expect(getComputedStyle(screen.getByTestId('bar-CRITICAL')).flexGrow).toBe('0')
       expect(section('Work across engineers').getByText('There are no engineers yet.')).toBeInTheDocument()
       expect(section('Response times').getAllByText('no data yet')).toHaveLength(3)
 

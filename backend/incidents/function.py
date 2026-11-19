@@ -59,6 +59,15 @@ WORKFLOW = {
 # "Open" for counting means still needing work, the same definition backend/engineers uses.
 STILL_OPEN = "i.status NOT IN ('RESOLVED', 'CLOSED')"
 ACKNOWLEDGE = ", acknowledged_at = coalesce(acknowledged_at, now())"  # the first staff action
+# When the reporter last heard anything: a status change or a public note by someone else.
+HEARD = (
+    "greatest((SELECT max(h.changed_at) FROM incident_status_history h "
+    "WHERE h.incident_id = i.id AND h.changed_by <> i.reporter_id), "
+    "(SELECT max(n.created_at) FROM incident_notes n "
+    "WHERE n.incident_id = i.id AND NOT n.is_internal AND n.author_id <> i.reporter_id))"
+)
+# Still needing work, and three days or more of silence towards the reporter.
+QUIET = f"{STILL_OPEN} AND coalesce({HEARD}, i.created_at) < now() - interval '3 days'"
 
 # An incident as the list shows it; the detail adds MORE. "ae" is the assigned engineer's
 # profile, which visible_to() and is_staff() rely on.
@@ -260,8 +269,20 @@ def summary(_event, user):
         params,
     )
     by_assignee, by_category, by_location = [], [], {"buildings": [], "floors": [], "seats": []}
-    needs_attention = []
+    needs_attention, kept_informed = [], None
     if user["role"] == "ADMIN":  # the questions about the whole site
+        kept_informed = query(  # how well reporters are kept informed about progress and outcomes
+            f"SELECT count(*) FILTER (WHERE {STILL_OPEN}) AS open, count(*) FILTER (WHERE {QUIET}) AS quiet, "
+            "count(*) FILTER (WHERE i.status = 'RESOLVED') AS awaiting_confirmation, "
+            "count(*) FILTER (WHERE i.status = 'CLOSED') AS closed, "
+            "count(*) FILTER (WHERE i.status = 'CLOSED' AND EXISTS (SELECT 1 FROM incident_status_history h "
+            "WHERE h.incident_id = i.id AND h.to_status = 'CLOSED' AND h.changed_by = i.reporter_id)) "
+            "AS confirmed_by_reporter FROM incidents i"
+        )
+        kept_informed["quietest"] = query_all(  # the longest silences first
+            f"SELECT i.id, i.title, i.status, {HEARD} AS last_heard, au.full_name AS assignee{FROM} "
+            f"WHERE {QUIET} ORDER BY coalesce({HEARD}, i.created_at), i.id LIMIT 5"
+        )
         needs_attention = query_all(  # blocked or escalated and still open: the longest-waiting first, with why
             "SELECT i.id, i.title, i.status, i.priority, i.is_escalated, i.blocked_reason, i.escalation_reason, "
             f"au.full_name AS assignee{FROM} WHERE {STILL_OPEN} AND (i.status = 'BLOCKED' OR i.is_escalated) "
@@ -302,6 +323,7 @@ def summary(_event, user):
             "by_category": by_category,
             "by_location": by_location,
             "needs_attention": needs_attention,
+            "kept_informed": kept_informed,
             "average_hours": {key: row[key] for key in ("to_acknowledge", "to_assign", "to_resolve")},
         },
     )

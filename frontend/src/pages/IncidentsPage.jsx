@@ -295,6 +295,10 @@ export default function IncidentsPage() {
                     <Typography color="text.secondary">
                       Reported by {incident.reporter}, {formatDateTime(incident.created_at)}
                     </Typography>
+                    {/* Only once something has happened to it since it was reported */}
+                    {incident.updated_at !== incident.created_at && (
+                      <Typography color="text.secondary">Updated {formatDateTime(incident.updated_at)}</Typography>
+                    )}
                   </Box>
                 </ListItemButton>
               </ListItem>

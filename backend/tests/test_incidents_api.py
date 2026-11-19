@@ -920,8 +920,10 @@ EMPTY = {
     "by_category": [],
     "by_location": {"buildings": [], "floors": [], "seats": []},
     "needs_attention": [],
+    "kept_informed": None,
     "average_hours": {"to_acknowledge": None, "to_assign": None, "to_resolve": None},
 }
+NOBODY_WAITING = {"open": 0, "quiet": 0, "awaiting_confirmation": 0, "closed": 0, "confirmed_by_reporter": 0, "quietest": []}
 
 
 def load(desk, who, tickets):
@@ -939,7 +941,10 @@ def load(desk, who, tickets):
 def test_the_summary_of_nothing_is_all_zeros(desk):
     assert desk.call("reporter", "GET", "/api/incidents/summary") == (200, EMPTY)
     engineers = [load(desk, "engineer", 0), load(desk, "other_engineer", 0)]
-    assert desk.call("admin", "GET", "/summary") == (200, {**EMPTY, "by_assignee": engineers})
+    assert desk.call("admin", "GET", "/summary") == (
+        200,
+        {**EMPTY, "by_assignee": engineers, "kept_informed": NOBODY_WAITING},
+    )
 
 
 @pytest.fixture
@@ -981,6 +986,10 @@ def busy(desk):
 def test_the_admin_summary_counts_everything_and_shows_each_engineers_load(desk, busy):
     status, body = desk.call("admin", "GET", "/summary")
     # Door is blocked and escalated; Blind is escalated too, but closed, so it needs nobody's attention
+    # Three still need work, none of them quiet; Lights waits for its reporter; both closed ones were closed by staff
+    assert body.pop("kept_informed") == {
+        "open": 3, "quiet": 0, "awaiting_confirmation": 1, "closed": 2, "confirmed_by_reporter": 0, "quietest": [],
+    }  # fmt: skip
     assert [{key: value for key, value in row.items() if key != "id"} for row in body.pop("needs_attention")] == [
         {
             "title": "Door",
@@ -1024,6 +1033,7 @@ def test_everyone_else_gets_the_summary_of_their_own_incidents(desk, busy):
         "by_category": [],  # the site-wide rankings are for admins
         "by_location": {"buildings": [], "floors": [], "seats": []},
         "needs_attention": [],
+        "kept_informed": None,
         "average_hours": {"to_acknowledge": 1.5, "to_assign": 2.0, "to_resolve": 10.0},
     }
     mine = desk.call("engineer", "GET", "/summary")[1]  # Router, Lights, Projector
@@ -1153,6 +1163,54 @@ def test_the_admin_summary_lists_at_most_ten_needing_attention_longest_waiting_f
         db.query("UPDATE incidents SET updated_at = now() - %s * interval '1 hour' WHERE id = %s", (number, incident["id"]), fetch=False)
     waiting = desk.call("admin", "GET", "/summary")[1]["needs_attention"]
     assert [row["title"] for row in waiting] == [f"Flood {number:02}" for number in range(11, 1, -1)]
+
+
+# --- keeping reporters informed --------------------------------------------------------
+
+
+def test_the_admin_sees_how_well_reporters_are_kept_informed(desk):
+    def days_ago(table, column, days, where, *params):
+        db.query(f"UPDATE {table} SET {column} = now() - %s * interval '1 day' WHERE {where}", (days, *params), fetch=False)
+
+    def reported(title, days, status=None):
+        incident = desk.at(status, title=title) if status else desk.report(title=title)
+        days_ago("incidents", "created_at", days, "id = %s", incident["id"])
+        days_ago("incident_status_history", "changed_at", days, "incident_id = %s", incident["id"])
+        return incident
+
+    reported("Never answered", 5)  # open, and nobody has said or done anything
+    answered = reported("Answered yesterday", 10)
+    desk.note("admin", answered, body="Parts ordered")
+    days_ago("incident_notes", "created_at", 1, "incident_id = %s", answered["id"])
+    stale = reported("Went quiet", 10, "IN_PROGRESS")  # the admin's moves, ten days ago...
+    days_ago("incident_status_history", "changed_at", 6, "incident_id = %s AND to_status = 'IN_PROGRESS'", stale["id"])
+    desk.note("admin", stale, body="Internal chatter", is_internal=True)  # ...which the reporter cannot see
+    desk.note("reporter", stale, body="Any news?")  # ...and their own question is not news to them
+    desk.report(title="Reported today")
+    reported("Waiting for the reporter", 2, "RESOLVED")
+    desk.move("reporter", reported("Confirmed fixed", 3, "RESOLVED"), "CLOSED")
+    reported("Closed by staff", 3, "CLOSED")
+
+    informed = desk.call("admin", "GET", "/summary")[1]["kept_informed"]
+    quietest = informed.pop("quietest")
+    assert informed == {"open": 4, "quiet": 2, "awaiting_confirmation": 1, "closed": 2, "confirmed_by_reporter": 1}
+    assert [(row["title"], row["status"], row["assignee"]) for row in quietest] == [
+        ("Went quiet", "IN_PROGRESS", desk.cast["engineer"]["name"]),  # last heard six days ago
+        ("Never answered", "OPEN", None),  # reported five days ago, heard nothing
+    ]
+    assert quietest[0]["last_heard"][10] == "T" and quietest[1]["last_heard"] is None
+    assert set(quietest[0]) == {"id", "title", "status", "last_heard", "assignee"}
+    for who in ("reporter", "engineer"):
+        assert desk.call(who, "GET", "/summary")[1]["kept_informed"] is None
+
+
+def test_only_the_five_longest_silences_are_listed(desk):
+    for number in range(7):
+        incident = desk.report(title=f"Silent {number}")
+        db.query("UPDATE incidents SET created_at = now() - %s * interval '1 day' WHERE id = %s", (4 + number, incident["id"]), fetch=False)
+    informed = desk.call("admin", "GET", "/summary")[1]["kept_informed"]
+    assert (informed["open"], informed["quiet"]) == (7, 7)
+    assert [row["title"] for row in informed["quietest"]] == [f"Silent {number}" for number in (6, 5, 4, 3, 2)]
 
 
 # --- found by review -------------------------------------------------------------------

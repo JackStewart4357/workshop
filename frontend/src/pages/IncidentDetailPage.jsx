@@ -251,6 +251,7 @@ function FeedbackForm({ onGive }) {
       </Typography>
       <Rating
         name="rating"
+        role="radiogroup"
         aria-labelledby="rating-label"
         value={Number(values.rating) || null}
         onChange={handleChange}
@@ -387,7 +388,11 @@ export default function IncidentDetailPage() {
         <Typography variant="h2" gutterBottom>
           Progress
         </Typography>
-        <WorkflowSteps status={incident.status} blockedReason={incident.blocked_reason} />
+        <WorkflowSteps
+          status={incident.status}
+          blockedReason={incident.blocked_reason}
+          unworked={incident.status === 'CLOSED' && !incident.resolved_at}
+        />
 
         <Stack direction="row" sx={{ flexWrap: 'wrap', alignItems: 'center', gap: 1, mt: 2 }}>
           {moves.map((option, index) => (

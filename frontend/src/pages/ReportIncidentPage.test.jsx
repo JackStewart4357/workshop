@@ -252,4 +252,20 @@ describe('ReportIncidentPage', () => {
     expect(await screen.findByLabelText(/title/i)).toBeInTheDocument()
     await waitFor(() => expect(within(document.body).queryByRole('alert')).not.toBeInTheDocument())
   })
+
+  it('says so when the chosen building has no floors, or the chosen floor has no seats', async () => {
+    const { user } = await renderPage()
+    await choose(user, 'Building', 'Warehouse')
+    expect(select('Floor')).toHaveAccessibleDescription('This building has no floors listed')
+
+    await choose(user, 'Building', 'Headquarters')
+    expect(select('Floor')).toHaveAccessibleDescription('Optional')
+    await choose(user, 'Floor', 'Ground floor')
+    expect(select('Seat')).toHaveAccessibleDescription('This floor has no seats listed')
+  })
+
+  it('says who adds buildings when there are none to choose', async () => {
+    await renderPage({ 'GET /api/facilities/buildings': () => ({ body: { buildings: [] } }) })
+    expect(select('Building')).toHaveAccessibleDescription(/no buildings yet/)
+  })
 })

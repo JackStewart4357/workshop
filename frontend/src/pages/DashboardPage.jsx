@@ -109,7 +109,7 @@ function PriorityBars({ counts, to }) {
                 aria-hidden
                 data-testid={`bar-${priority}`}
                 sx={{
-                  flex: `0 1 ${(count / longest) * 100}%`,
+                  flexGrow: count / longest, // below 1, a bar takes that share of the room left in its row
                   height: 12,
                   bgcolor: 'primary.main',
                   borderRadius: '0 4px 4px 0', // square where it starts, rounded where the value ends
@@ -157,7 +157,7 @@ function RankedBars({ rows, empty }) {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Box
               aria-hidden
-              sx={{ flex: `0 1 ${(count / longest) * 100}%`, height: 12, bgcolor: 'primary.main', borderRadius: '0 4px 4px 0' }}
+              sx={{ flexGrow: count / longest, height: 12, bgcolor: 'primary.main', borderRadius: '0 4px 4px 0' }}
             />
             <Typography sx={{ fontWeight: 600 }}>{count}</Typography>
           </Box>
@@ -192,6 +192,84 @@ function IncidentRows({ incidents, withPriority = false }) {
         </Box>
       ))}
     </Box>
+  )
+}
+
+/**
+ * How well the people who report incidents are kept up to date: how many open incidents
+ * had an update their reporter could see lately, which have gone quiet, and how the
+ * finished ones ended. "An update" is a status change or a public note from someone else.
+ */
+function KeptInformed({ informed }) {
+  const { open, quiet, quietest, closed } = informed
+  return (
+    <Section title="Keeping reporters informed">
+      {open === 0 ? (
+        <Typography color="text.secondary">There are no open incidents.</Typography>
+      ) : (
+        <>
+          <Typography>
+            <strong>
+              {open - quiet} of {open}
+            </strong>{' '}
+            open incidents had an update their reporter could see in the last 3 days
+          </Typography>
+          <LinearProgress
+            variant="determinate"
+            aria-label="Open incidents with a recent update"
+            value={Math.round(((open - quiet) / open) * 100)}
+            sx={{ mt: 0.5, height: 8, borderRadius: 4 }}
+          />
+          {quiet === 0 ? (
+            <Typography color="text.secondary" sx={{ mt: 1.5 }}>
+              Every open incident has had a recent update.
+            </Typography>
+          ) : (
+            <>
+              <Typography sx={{ mt: 1.5 }}>
+                {quiet} {quiet === 1 ? 'has' : 'have'} been quiet for 3 days or more:
+              </Typography>
+              <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
+                {quietest.map((incident) => (
+                  <Box
+                    key={incident.id}
+                    component="li"
+                    sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, py: 1, borderTop: 1, borderColor: 'divider' }}
+                  >
+                    <Link
+                      component={RouterLink}
+                      to={`/incidents/${incident.id}`}
+                      sx={{ flexGrow: 1, minWidth: 0, overflowWrap: 'anywhere' }}
+                    >
+                      {incident.title}
+                    </Link>
+                    <StatusChip status={incident.status} />
+                    <Typography variant="body2" color="text.secondary">
+                      {incident.assignee ?? 'Unassigned'},{' '}
+                      {incident.last_heard ? `last update ${formatDate(incident.last_heard)}` : 'no update yet'}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+              {quiet > quietest.length && (
+                <Typography color="text.secondary">and {quiet - quietest.length} more</Typography>
+              )}
+            </>
+          )}
+        </>
+      )}
+      {/* Outcomes: what is waiting for its reporter, and how often the reporter was the one to close it */}
+      <Typography sx={{ mt: 1.5 }}>
+        <Link component={RouterLink} to="/incidents?status=RESOLVED">
+          {informed.awaiting_confirmation} resolved, waiting for the reporter to confirm
+        </Link>
+      </Typography>
+      <Typography>
+        {closed === 0
+          ? 'No incidents have been closed yet.'
+          : `${informed.confirmed_by_reporter} of ${closed} closed incidents were confirmed by their reporter`}
+      </Typography>
+    </Section>
   )
 }
 
@@ -255,7 +333,7 @@ function AdminDashboard({ summary }) {
           label="Unassigned"
           value={summary.unassigned_open}
           caption="open, no engineer yet"
-          to="/incidents?assignee=none"
+          to="/incidents?assignee=none&status=OPEN"
         />
         <StatTile
           label="Escalated"
@@ -291,6 +369,7 @@ function AdminDashboard({ summary }) {
           ))}
         </Box>
       </Section>
+      <KeptInformed informed={summary.kept_informed} />
       <Section title="Incidents by priority">
         <PriorityBars counts={summary.by_priority} to={(priority) => `/incidents?priority=${priority}`} />
       </Section>
@@ -307,7 +386,7 @@ function AdminDashboard({ summary }) {
       </Section>
       <Section title="Where incidents recur">
         {/* The five with the most incidents ever reported there, whatever their status */}
-        <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, 1fr)' } }}>
+        <Box sx={{ display: 'grid', gap: 2 }}>
           {[
             ['Buildings', summary.by_location.buildings, (row) => `/incidents?building_id=${row.building_id}`],
             ['Floors', summary.by_location.floors],

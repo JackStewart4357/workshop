@@ -14,7 +14,7 @@ const PHONE_QUERY = { maxWidth: 599 }
  * Where an incident is in the workflow, as a row of steps (a column on a phone). Every
  * step says in words whether it is done or current, so colour is never the only signal.
  */
-export default function WorkflowSteps({ status, blockedReason }) {
+export default function WorkflowSteps({ status, blockedReason, unworked }) {
   const isPhone = useMediaQuery(PHONE_QUERY)
   const blocked = status === 'BLOCKED'
   const current = STEPS.indexOf(blocked ? 'IN_PROGRESS' : status)
@@ -28,10 +28,11 @@ export default function WorkflowSteps({ status, blockedReason }) {
       alternativeLabel={!isPhone}
     >
       {STEPS.map((step, index) => {
-        const done = index < current || status === 'CLOSED' // closed is the end of the path
+        const skipped = unworked && index > 0 && index < current // closed straight from Open: nobody worked on it
+        const done = !skipped && (index < current || status === 'CLOSED') // closed is the end of the path
         const here = index === current && !done
         const stuck = here && blocked
-        const note = done ? 'Done' : here ? (stuck ? blockedReason : 'Current step') : ''
+        const note = skipped ? 'Skipped' : done ? 'Done' : here ? (stuck ? blockedReason : 'Current step') : ''
         return (
           <Step key={step} completed={done} aria-current={here ? 'step' : undefined}>
             <StepLabel

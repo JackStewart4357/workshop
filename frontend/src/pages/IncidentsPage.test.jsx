@@ -1,6 +1,7 @@
 // The page against a small fake API: only fetch is faked.
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Link } from 'react-router-dom'
 import { beforeEach, describe, expect, it } from 'vitest'
 import IncidentsPage from './IncidentsPage.jsx'
 import { USERS, apiError, mockApi, renderWithProviders } from '../test/helpers.jsx'
@@ -100,6 +101,7 @@ describe('IncidentsPage', () => {
     expect(first.getByText('Headquarters, Floor 2, seat 2F-A14')).toBeInTheDocument()
     expect(first.getByText('Assigned to Priya Sharma')).toBeInTheDocument()
     expect(first.getByText(`Reported by Alice Johnson, ${formatDateTime(leak.created_at)}`)).toBeInTheDocument()
+    expect(first.getByText(`Updated ${formatDateTime(leak.updated_at)}`)).toBeInTheDocument()
 
     const second = within(screen.getByRole('link', { name: /Wi-Fi keeps dropping/ }))
     expect(second.getByText('Open')).toBeInTheDocument()
@@ -116,6 +118,16 @@ describe('IncidentsPage', () => {
     expect(screen.queryByText(/No incidents/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Showing the newest/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
+  })
+
+  it('says when an incident was last updated only once something has happened to it', async () => {
+    found = [leak, { ...wifi, updated_at: wifi.created_at }] // nobody has touched the Wi-Fi one yet
+    await renderPage()
+    const touched = within(await screen.findByRole('link', { name: /Leaking tap/ }))
+    expect(touched.getByText(`Updated ${formatDateTime(leak.updated_at)}`)).toBeInTheDocument()
+    const untouched = within(screen.getByRole('link', { name: /Wi-Fi keeps dropping/ }))
+    expect(untouched.getByText(`Reported by Alice Johnson, ${formatDateTime(wifi.created_at)}`)).toBeInTheDocument()
+    expect(untouched.queryByText(/^Updated/)).not.toBeInTheDocument()
   })
 
   it('says so when there are no incidents, and says it differently when filters hide them', async () => {
@@ -296,5 +308,25 @@ describe('IncidentsPage', () => {
     expect(screen.queryByRole('combobox', { name: /^Assignee/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('switch', { name: 'Assigned to me' })).not.toBeInTheDocument()
     expect(calls.map((call) => call.path).sort()).toEqual(['/api/facilities/buildings', '/api/incidents/categories', TICKETS])
+  })
+
+  it('leaves a refused address behind when the menu link is followed', async () => {
+    mockApi({
+      ...reads,
+      [`GET ${TICKETS}`]: ({ query }) =>
+        query ? apiError(400, 'validation_error', 'Some fields are invalid') : { body: { incidents: found } },
+    })
+    renderWithProviders(
+      <>
+        <Link to="/incidents">Menu</Link>
+        <IncidentsPage />
+      </>,
+      { route: '/incidents?status=open', auth: { user: USERS.employee } },
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('Some fields are invalid')
+
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Menu' }))
+    expect(await screen.findByRole('link', { name: /Leaking tap/ })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
