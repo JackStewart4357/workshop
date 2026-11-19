@@ -7,6 +7,9 @@ import psycopg
 from psycopg.rows import dict_row
 
 IS_LOCAL = os.getenv("IS_LOCAL", "false") == "true"
+# An idle Aurora cluster goes to sleep and takes about 15 seconds to wake. Wait long enough
+# for that, but answer before CloudFront gives up on the request (30 seconds).
+CONNECT_TIMEOUT = 25
 
 _conn = None
 _in_transaction = False
@@ -20,7 +23,7 @@ def pg_conninfo():
         "user": os.getenv("POSTGRES_USER", "postgres"),
         "password": os.getenv("POSTGRES_PASS", "postgres123"),
         "dbname": os.getenv("POSTGRES_NAME", "postgres"),
-        "connect_timeout": "15",
+        "connect_timeout": CONNECT_TIMEOUT,
     }
     if not IS_LOCAL:
         parts["sslmode"] = "require"

@@ -65,6 +65,12 @@ def test_query_commits_its_own_transaction():
         assert other.execute("SELECT count(*) FROM users").fetchone()[0] == 1
 
 
+def test_a_sleeping_database_is_given_time_to_wake_but_less_than_cloudfront_allows():
+    # Aurora takes about 15 seconds to wake; CloudFront stops waiting for an answer after 30
+    assert 15 < db.CONNECT_TIMEOUT < 30
+    assert f"connect_timeout={db.CONNECT_TIMEOUT}" in db.pg_conninfo()
+
+
 def test_failed_statement_rolls_back_and_the_connection_stays_usable():
     with pytest.raises(psycopg.Error):
         db.query("SELECT * FROM table_that_does_not_exist")
