@@ -15,15 +15,26 @@ from function import handler
 class Adapter(BaseHTTPRequestHandler):
     timeout = 10  # seconds a silent client may hold the one thread before it is dropped
 
+    def body(self):
+        """The request body. A client that knows its length says so; one that streams (the
+        local proxy does, and so may a load balancer) sends it in chunks, each led by its size."""
+        if "chunked" not in self.headers.get("Transfer-Encoding", "").lower():
+            return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        body = b""
+        while size := int(self.rfile.readline().split(b";")[0].strip() or b"0", 16):
+            body += self.rfile.read(size)
+            self.rfile.readline()  # the line break that ends each chunk
+        self.rfile.readline()  # the empty line after the last, zero-sized chunk
+        return body
+
     def answer(self):
         url = urlsplit(self.path)
-        length = int(self.headers.get("Content-Length") or 0)
         event = {
             "requestContext": {"http": {"method": self.command}},
             "rawPath": url.path,
             "rawQueryString": url.query,
             "headers": dict(self.headers.items()),
-            "body": self.rfile.read(length).decode("utf-8", "replace") if length else None,
+            "body": self.body().decode("utf-8", "replace") or None,
             "isBase64Encoded": False,
         }
         response = handler(event, None)

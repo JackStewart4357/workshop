@@ -1,6 +1,7 @@
 """Integration tests for the feedback service: every endpoint, through the Lambda handler,
 against a real database, plus the small web server that runs it in a container."""
 
+import http.client
 import importlib.util
 import json
 import sys
@@ -341,3 +342,23 @@ def test_the_container_serves_the_same_handler_over_http(container, cast):
     assert saved()[0]["comment"] == "Great"
     status, _, body = call(container + f"/engineers/{cast['profile']}", token=cast["manager"]["token"])
     assert (status, body["feedback"][0]["rating"]) == (200, 5)
+
+
+def test_the_container_reads_a_body_sent_in_chunks(container, cast):
+    # The local proxy streams request bodies without saying how long they are, as a load
+    # balancer may: the first feedback sent through it arrived as "Request body is required".
+    host, port = container.removeprefix("http://").split(":")
+    connection = http.client.HTTPConnection(host, int(port), timeout=10)
+    pieces = iter([b'{"rating": 5, ', b'"comment": "Sent in pieces"}'])
+    connection.request(
+        "POST",
+        f"/api/feedback/incidents/{cast['incident']}",
+        body=pieces,
+        headers={"Authorization": f"Bearer {cast['reporter']['token']}", "Content-Type": "application/json"},
+        encode_chunked=True,
+    )
+    response = connection.getresponse()
+    assert (response.status, json.loads(response.read())) == (201, {"given": True, "can_give": False})
+    connection.close()
+    assert [(row["rating"], row["comment"]) for row in saved()] == [(5, "Sent in pieces")]
+
