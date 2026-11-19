@@ -360,4 +360,58 @@ describe('IncidentsPage', () => {
     expect(await screen.findByRole('link', { name: /Leaking tap/ })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  describe('with a long list', () => {
+    const many = (count, status = 'OPEN') =>
+      Array.from({ length: count }, (_, index) => ({ ...wifi, id: `m-${status}-${index}`, title: `Incident ${index + 1}`, status }))
+    const rows = () => within(screen.getByRole('list', { name: 'Incidents' })).getAllByRole('link')
+
+    it('leaves a short list exactly as it was: every row, nothing to page', async () => {
+      await renderPage()
+      expect(rows()).toHaveLength(2)
+      expect(screen.queryByText(/^Showing \d+ of/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument()
+    })
+
+    it('draws the rows 25 at a time, newest first as the API sent them', async () => {
+      found = many(60)
+      const { user } = await renderPage()
+      expect(rows()).toHaveLength(25)
+      expect(rows()[0]).toHaveTextContent('Incident 1')
+      expect(screen.getByText('Showing 25 of 60')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Show 25 more' }))
+      expect(rows()).toHaveLength(50)
+      await user.click(screen.getByRole('button', { name: 'Show 10 more' }))
+      expect(rows()).toHaveLength(60)
+      expect(rows()[59]).toHaveTextContent('Incident 60')
+      expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument()
+    })
+
+    it('keeps the "newest 200" note and pages those 200 as well', async () => {
+      found = many(200)
+      await renderPage()
+      expect(screen.getByText('Showing the newest 200. Narrow the filters to see others.')).toBeInTheDocument()
+      expect(rows()).toHaveLength(25)
+      expect(screen.getByText('Showing 25 of 200')).toBeInTheDocument()
+    })
+
+    it('goes back to the first 25 when a filter changes the list, even to one just as long', async () => {
+      mockApi({
+        ...reads,
+        [`GET ${TICKETS}`]: ({ query }) => ({ body: { incidents: many(60, query?.status ?? 'OPEN') } }),
+      })
+      renderWithProviders(<IncidentsPage />, { route: '/incidents', auth: { user: USERS.employee } })
+      const user = userEvent.setup()
+      await screen.findByRole('heading', { name: 'Incidents' })
+      await user.click(screen.getByRole('button', { name: 'Show 25 more' }))
+      expect(rows()).toHaveLength(50)
+
+      await user.click(screen.getByRole('combobox', { name: 'Status' }))
+      await user.click(screen.getByRole('option', { name: 'Resolved' }))
+      await waitFor(() => expect(rows()[0]).toHaveTextContent('Resolved'))
+      expect(rows()).toHaveLength(25)
+      expect(screen.getByText('Showing 25 of 60')).toBeInTheDocument()
+    })
+  })
 })

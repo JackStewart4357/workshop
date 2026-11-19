@@ -39,6 +39,7 @@ const LOADERS = {
 
 const MOST_URGENT_FIRST = [...PRIORITIES].reverse()
 const CATEGORY_TYPES = { FACILITY: 'Facility', TECHNOLOGY: 'Technology' }
+const ENGINEERS_SHOWN = 10 // a larger team is cut to its busiest on the admin dashboard
 const RESPONSE_TIMES = [
   ['to_acknowledge', 'Acknowledged in'],
   ['to_assign', 'Assigned in'],
@@ -323,6 +324,17 @@ function EngineerDashboard({ incidents }) {
   )
 }
 
+/**
+ * The engineers to draw under "Work across engineers". A team that fits is shown whole, in
+ * the API's order (by name). A larger one is cut to the busiest, most open incidents first.
+ */
+function busiest(engineers) {
+  if (engineers.length <= ENGINEERS_SHOWN) return engineers
+  return [...engineers]
+    .sort((a, b) => b.open - a.open || a.assignee.localeCompare(b.assignee))
+    .slice(0, ENGINEERS_SHOWN)
+}
+
 function AdminDashboard({ summary }) {
   return (
     <>
@@ -407,7 +419,7 @@ function AdminDashboard({ summary }) {
       <Section title="Work across engineers">
         {summary.by_assignee.length === 0 && <Typography color="text.secondary">There are no engineers yet.</Typography>}
         <Stack spacing={1.5}>
-          {summary.by_assignee.map((engineer) => {
+          {busiest(summary.by_assignee).map((engineer) => {
             const full = engineer.open >= engineer.max_open_tickets
             return (
               <Box key={engineer.assignee_id}>
@@ -440,6 +452,15 @@ function AdminDashboard({ summary }) {
             )
           })}
         </Stack>
+        {summary.by_assignee.length > ENGINEERS_SHOWN && (
+          <Typography color="text.secondary" sx={{ mt: 1.5 }}>
+            Showing the {ENGINEERS_SHOWN} with the most open incidents,{' '}
+            <Link component={RouterLink} to="/engineers">
+              and {summary.by_assignee.length - ENGINEERS_SHOWN} more
+            </Link>
+            .
+          </Typography>
+        )}
       </Section>
       <Section title="Response times">
         <Box sx={TILES}>

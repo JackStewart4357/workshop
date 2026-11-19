@@ -16,6 +16,7 @@ import Typography from '@mui/material/Typography'
 import AddIcon from '@mui/icons-material/Add'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
+import ShowMore from '../components/ShowMore.jsx'
 import { PriorityChip, StatusChip } from '../components/StatusChip.jsx'
 import StuckReasons from '../components/StuckReasons.jsx'
 import { useAuth } from '../context/AuthContext.js'
@@ -25,12 +26,14 @@ import { listBuildings } from '../services/facilitiesService.js'
 import * as incidents from '../services/incidentsService.js'
 import { formatDateTime, locationOf } from '../utils/format.js'
 import { useServerList } from '../utils/useServerList.js'
+import { useShowMore } from '../utils/useShowMore.js'
 
 // The filters, by the names the API gives them. They live in the page address, so a
 // reload, the Back button and a shared link all show the same list.
 const FILTERS = ['q', 'status', 'priority', 'category_id', 'building_id', 'assignee', 'escalated', 'open']
 const SEARCH_PAUSE = 400 // milliseconds without typing before a search is sent
 const LIST_LIMIT = 200 // the most the API returns
+const PAGE_SIZE = 25 // how many of them are drawn at a time
 
 const named = (labels) => Object.entries(labels).map(([value, label]) => ({ value, label }))
 
@@ -131,6 +134,8 @@ export default function IncidentsPage() {
   const fetchIncidents = useCallback(() => incidents.listIncidents(filters), [filters])
   const list = useServerList(fetchIncidents)
   const choices = useServerList(user.role === ROLES.ADMIN ? loadAdminChoices : loadChoices)
+  // The API sends up to 200; the page draws them 25 at a time, from the top again whenever the filters change
+  const paging = useShowMore(list.items ?? [], PAGE_SIZE, address)
 
   const setFilter = useCallback(
     (name, value) =>
@@ -272,8 +277,8 @@ export default function IncidentsPage() {
       {list.items.length > 0 && (
         <Paper variant="outlined">
           <List disablePadding aria-label="Incidents">
-            {list.items.map((incident, index) => (
-              <ListItem key={incident.id} disablePadding divider={index < list.items.length - 1}>
+            {paging.visible.map((incident, index) => (
+              <ListItem key={incident.id} disablePadding divider={index < paging.visible.length - 1}>
                 <ListItemButton
                   component={RouterLink}
                   to={`/incidents/${incident.id}`}
@@ -315,6 +320,7 @@ export default function IncidentsPage() {
           </List>
         </Paper>
       )}
+      <ShowMore {...paging} />
     </Stack>
   )
 }

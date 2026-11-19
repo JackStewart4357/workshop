@@ -490,4 +490,119 @@ describe('FacilitiesPage', () => {
     finish({ body: { seat: { id: 's-1', floor_id: 'f-0', code: 'GF-A01' } } })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
+
+  describe('with many buildings', () => {
+    // Headquarters and the Annex from above, plus enough plain ones to need folding and paging
+    const withExtra = (count) => [
+      ...buildings,
+      ...Array.from({ length: count }, (_, index) => ({
+        id: `x-${index}`,
+        name: `Block ${String(index + 1).padStart(2, '0')}`,
+        address: `${index + 1} Long Road, Leeds`,
+        floors: [],
+      })),
+    ]
+    const shownBuildings = () => screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'))
+
+    it('starts a handful of buildings open, with nothing to search or page, and lets each be folded', async () => {
+      const { user } = await renderPage()
+      expect(within(headquarters()).getAllByRole('group')).toHaveLength(3)
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+      expect(screen.queryByText(/^Showing \d+ of/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Hide Riverside Annex' })).toHaveAttribute('aria-expanded', 'true')
+
+      // Folding a building takes its floors and seats with it, and leaves the others alone
+      await user.click(screen.getByRole('button', { name: 'Hide Headquarters' }))
+      expect(within(headquarters()).queryByRole('group')).not.toBeInTheDocument()
+      expect(within(headquarters()).getByText('3 floors, 1 seat')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Show Headquarters' })).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.getByRole('button', { name: 'Hide Riverside Annex' })).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Show Headquarters' }))
+      expect(within(headquarters()).getAllByRole('group')).toHaveLength(3)
+    })
+
+    it('shows them 20 at a time', async () => {
+      buildings = withExtra(43) // 45 in all
+      const { user } = await renderPage()
+      expect(shownBuildings()).toHaveLength(20)
+      expect(screen.getByText('Showing 20 of 45')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Show 20 more' }))
+      expect(shownBuildings()).toHaveLength(40)
+      await user.click(screen.getByRole('button', { name: 'Show 5 more' }))
+      expect(shownBuildings()).toHaveLength(45)
+      expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument()
+      expect(screen.queryByText(/^Showing/)).not.toBeInTheDocument()
+    })
+
+    it('folds each building to one line that opens and closes', async () => {
+      buildings = withExtra(4) // six: one more than is shown whole
+      const { user } = await renderPage()
+      const folded = within(headquarters())
+      expect(folded.getByText('3 floors, 1 seat')).toBeInTheDocument()
+      expect(folded.getByText('1 Acme Plaza, London')).toBeInTheDocument()
+      expect(folded.queryByRole('group')).not.toBeInTheDocument()
+      expect(folded.queryByLabelText('Floor number')).not.toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'Block 01' })).getByText('0 floors, 0 seats')).toBeInTheDocument()
+      // Editing and removing do not need the building open
+      expect(folded.getByRole('button', { name: 'Edit Headquarters' })).toBeEnabled()
+      expect(folded.getByRole('button', { name: 'Remove Headquarters' })).toBeEnabled()
+
+      const toggle = folded.getByRole('button', { name: 'Show Headquarters' })
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await user.click(toggle)
+      expect(folded.getAllByRole('group')).toHaveLength(3)
+      expect(folded.getByLabelText('Floor number')).toBeInTheDocument()
+      expect(folded.queryByText('3 floors, 1 seat')).not.toBeInTheDocument()
+      expect(folded.getByRole('button', { name: 'Hide Headquarters' })).toHaveAttribute('aria-expanded', 'true')
+      expect(within(screen.getByRole('region', { name: 'Riverside Annex' })).queryByLabelText('Floor number')).toBeNull()
+
+      await user.click(folded.getByRole('button', { name: 'Hide Headquarters' }))
+      expect(folded.queryByRole('group')).not.toBeInTheDocument()
+    })
+
+    it('says "1 floor" and "1 seat" without the plural', async () => {
+      buildings = [
+        ...withExtra(4).slice(1),
+        { id: 'one', name: 'Gatehouse', address: '1 Gate', floors: [{ id: 'f-g', level: 0, seats: [{ id: 's-g', code: 'G1' }] }] },
+      ]
+      await renderPage()
+      expect(within(screen.getByRole('region', { name: 'Gatehouse' })).getByText('1 floor, 1 seat')).toBeInTheDocument()
+    })
+
+    it('finds buildings by name or address, whatever the case', async () => {
+      buildings = withExtra(30)
+      const { user } = await renderPage()
+      const box = screen.getByRole('searchbox', { name: 'Find a building' })
+
+      await user.type(box, '  WHARF ') // only in the Annex's address
+      expect(shownBuildings()).toEqual(['Riverside Annex'])
+      expect(screen.queryByText(/^Showing/)).not.toBeInTheDocument()
+
+      await user.clear(box)
+      await user.type(box, 'block 0')
+      expect(shownBuildings()).toEqual(Array.from({ length: 9 }, (_, index) => `Block 0${index + 1}`))
+
+      await user.clear(box)
+      await user.type(box, 'no such place')
+      expect(shownBuildings).toThrow() // no building at all
+      expect(screen.getByText('No buildings match.')).toBeInTheDocument()
+
+      await user.clear(box)
+      expect(shownBuildings()).toHaveLength(20)
+      expect(screen.queryByText('No buildings match.')).not.toBeInTheDocument()
+    })
+
+    it('goes back to the first 20 when a search changes the list', async () => {
+      buildings = withExtra(43)
+      const { user } = await renderPage()
+      await user.click(screen.getByRole('button', { name: 'Show 20 more' }))
+      expect(shownBuildings()).toHaveLength(40)
+
+      await user.type(screen.getByRole('searchbox', { name: 'Find a building' }), 'block')
+      expect(shownBuildings()).toHaveLength(20)
+      expect(screen.getByText('Showing 20 of 43')).toBeInTheDocument()
+    })
+  })
 })

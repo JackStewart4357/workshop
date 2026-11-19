@@ -16,12 +16,16 @@ import AddIcon from '@mui/icons-material/Add'
 import CancelIcon from '@mui/icons-material/Cancel'
 import DeleteIcon from '@mui/icons-material/DeleteOutlined'
 import EditIcon from '@mui/icons-material/Edit'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
+import ShowMore from '../components/ShowMore.jsx'
 import * as facilities from '../services/facilitiesService.js'
 import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
+import { useShowMore } from '../utils/useShowMore.js'
 import {
   ADDRESS_MAX_LENGTH,
   NAME_MAX_LENGTH,
@@ -35,6 +39,12 @@ const BUILDING_RULES = {
   address: validateRequired('Address', ADDRESS_MAX_LENGTH),
 }
 const validateSeatCode = validateRequired('Seat code', SEAT_CODE_MAX_LENGTH)
+// Any building can be folded to one line, taking its floors and seats with it. Up to this
+// many buildings start open. With more, the page opens short: a search box, every building
+// folded, and a page of them at a time.
+const FEW_BUILDINGS = 5
+const PAGE_SIZE = 20
+const counted = (count, thing) => `${count} ${thing}${count === 1 ? '' : 's'}`
 
 /** The form for a new building, or for changing an existing one's name and address. */
 function BuildingDialog({ building, onSave, onClose }) {
@@ -163,6 +173,17 @@ export default function FacilitiesPage() {
   } = useServerList(facilities.listBuildings)
   const [editing, setEditing] = useState(null) // the building in the dialog; {} for a new one
   const [changing, setChanging] = useState(null) // the floor or seat in the one-field dialog, with how to save it
+  const [search, setSearch] = useState('')
+  const [toggled, setToggled] = useState({}) // buildings opened or folded by hand: { id: open }
+
+  const all = buildings ?? []
+  const many = all.length > FEW_BUILDINGS
+  const wanted = many ? search.trim().toLowerCase() : ''
+  const found = wanted
+    ? all.filter((building) => [building.name, building.address].some((text) => text.toLowerCase().includes(wanted)))
+    : all
+  const paging = useShowMore(found, PAGE_SIZE)
+  const isOpen = (building) => toggled[building.id] ?? !many
 
   if (loadError) return <LoadFailed title="Facilities" message={loadError} onRetry={retry} />
   if (!buildings) return <LoadingScreen label="Loading facilities" />
@@ -182,13 +203,42 @@ export default function FacilitiesPage() {
         </Alert>
       )}
       {buildings.length === 0 && <Typography color="text.secondary">There are no buildings yet.</Typography>}
+      {many && (
+        <TextField
+          label="Find a building"
+          type="search"
+          size="small"
+          margin="none"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          helperText="By name or address"
+        />
+      )}
+      {many && found.length === 0 && <Typography color="text.secondary">No buildings match.</Typography>}
 
-      {buildings.map((building) => (
+      {paging.visible.map((building) => (
         <Paper key={building.id} component="section" aria-label={building.name} variant="outlined" sx={{ p: 2 }}>
           <Stack direction="row" sx={{ alignItems: 'flex-start', gap: 0.5 }}>
+            {/* Folding a building folds its floors and seats with it */}
+            <IconButton
+              aria-label={`${isOpen(building) ? 'Hide' : 'Show'} ${building.name}`}
+              aria-expanded={isOpen(building)}
+              onClick={() => setToggled((current) => ({ ...current, [building.id]: !isOpen(building) }))}
+            >
+              {isOpen(building) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
             <Box sx={{ flexGrow: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
               <Typography variant="h2">{building.name}</Typography>
               <Typography color="text.secondary">{building.address}</Typography>
+              {!isOpen(building) && (
+                <Typography color="text.secondary">
+                  {counted(building.floors.length, 'floor')},{' '}
+                  {counted(
+                    building.floors.reduce((seats, floor) => seats + floor.seats.length, 0),
+                    'seat',
+                  )}
+                </Typography>
+              )}
             </Box>
             <IconButton aria-label={`Edit ${building.name}`} onClick={() => setEditing(building)} disabled={busy}>
               <EditIcon />
@@ -208,99 +258,106 @@ export default function FacilitiesPage() {
             </IconButton>
           </Stack>
 
-          {building.floors.map((floor) => {
-            const label = facilities.floorLabel(floor.level)
-            return (
-              <Box
-                key={floor.id}
-                role="group"
-                aria-label={label}
-                sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}
-              >
-                <Stack direction="row" sx={{ alignItems: 'center' }}>
-                  <Typography sx={{ flexGrow: 1, fontWeight: 600 }}>{label}</Typography>
-                  <IconButton
-                    size="small"
-                    aria-label={`Change ${label}`}
-                    onClick={() =>
-                      setChanging({
-                        title: `Change ${label} of ${building.name}`,
-                        label: 'Floor number',
-                        name: 'level',
-                        type: 'number',
-                        value: floor.level,
-                        validate: validateFloorLevel,
-                        save: (level) => facilities.updateFloor(floor.id, Number(level)),
-                      })
-                    }
-                    disabled={busy}
+          {isOpen(building) && (
+            <>
+              {building.floors.map((floor) => {
+                const label = facilities.floorLabel(floor.level)
+                return (
+                  <Box
+                    key={floor.id}
+                    role="group"
+                    aria-label={label}
+                    sx={{ mt: 2, pt: 1, borderTop: 1, borderColor: 'divider' }}
                   >
-                    <EditIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton
-                    size="small"
-                    aria-label={`Remove ${label}`}
-                    onClick={() =>
-                      setRemoving({
-                        what: `${label} of ${building.name}`,
-                        note: 'Its seats are removed with it.',
-                        run: () => facilities.removeFloor(floor.id),
-                      })
-                    }
-                    disabled={busy}
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1.5, minHeight: 32 }}>
-                  {floor.seats.length === 0 && <Typography color="text.secondary">No seats yet</Typography>}
-                  {floor.seats.map((seat) => (
-                    <Chip
-                      key={seat.id}
-                      label={seat.code}
-                      disabled={busy}
-                      // The chip itself opens the code for correcting; its cross still removes the seat
-                      aria-label={`Change seat ${seat.code}`}
-                      onClick={() =>
-                        setChanging({
-                          title: `Change seat ${seat.code}`,
-                          label: 'Seat code',
-                          name: 'code',
-                          value: seat.code,
-                          validate: validateSeatCode,
-                          save: (code) => facilities.updateSeat(seat.id, code),
-                        })
-                      }
-                      deleteIcon={<CancelIcon titleAccess={`Remove seat ${seat.code}`} />}
-                      onDelete={() =>
-                        setRemoving({ what: `seat ${seat.code}`, run: () => facilities.removeSeat(seat.id) })
-                      }
+                    <Stack direction="row" sx={{ alignItems: 'center' }}>
+                      <Typography sx={{ flexGrow: 1, fontWeight: 600 }}>{label}</Typography>
+                      <IconButton
+                        size="small"
+                        aria-label={`Change ${label}`}
+                        onClick={() =>
+                          setChanging({
+                            title: `Change ${label} of ${building.name}`,
+                            label: 'Floor number',
+                            name: 'level',
+                            type: 'number',
+                            value: floor.level,
+                            validate: validateFloorLevel,
+                            save: (level) => facilities.updateFloor(floor.id, Number(level)),
+                          })
+                        }
+                        disabled={busy}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        aria-label={`Remove ${label}`}
+                        onClick={() =>
+                          setRemoving({
+                            what: `${label} of ${building.name}`,
+                            note: 'Its seats are removed with it.',
+                            run: () => facilities.removeFloor(floor.id),
+                          })
+                        }
+                        disabled={busy}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                    <Box
+                      sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1.5, minHeight: 32 }}
+                    >
+                      {floor.seats.length === 0 && <Typography color="text.secondary">No seats yet</Typography>}
+                      {floor.seats.map((seat) => (
+                        <Chip
+                          key={seat.id}
+                          label={seat.code}
+                          disabled={busy}
+                          // The chip itself opens the code for correcting; its cross still removes the seat
+                          aria-label={`Change seat ${seat.code}`}
+                          onClick={() =>
+                            setChanging({
+                              title: `Change seat ${seat.code}`,
+                              label: 'Seat code',
+                              name: 'code',
+                              value: seat.code,
+                              validate: validateSeatCode,
+                              save: (code) => facilities.updateSeat(seat.id, code),
+                            })
+                          }
+                          deleteIcon={<CancelIcon titleAccess={`Remove seat ${seat.code}`} />}
+                          onDelete={() =>
+                            setRemoving({ what: `seat ${seat.code}`, run: () => facilities.removeSeat(seat.id) })
+                          }
+                        />
+                      ))}
+                    </Box>
+                    <InlineAdd
+                      label="Seat code"
+                      button="Add seat"
+                      validate={validateSeatCode}
+                      onAdd={(code) => change(() => facilities.addSeat(floor.id, code))}
+                      busy={busy}
                     />
-                  ))}
-                </Box>
+                  </Box>
+                )
+              })}
+
+              <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
                 <InlineAdd
-                  label="Seat code"
-                  button="Add seat"
-                  validate={validateSeatCode}
-                  onAdd={(code) => change(() => facilities.addSeat(floor.id, code))}
+                  label="Floor number"
+                  button="Add floor"
+                  type="number"
+                  validate={validateFloorLevel}
+                  onAdd={(level) => change(() => facilities.addFloor(building.id, Number(level)))}
                   busy={busy}
                 />
               </Box>
-            )
-          })}
-
-          <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-            <InlineAdd
-              label="Floor number"
-              button="Add floor"
-              type="number"
-              validate={validateFloorLevel}
-              onAdd={(level) => change(() => facilities.addFloor(building.id, Number(level)))}
-              busy={busy}
-            />
-          </Box>
+            </>
+          )}
         </Paper>
       ))}
+      <ShowMore {...paging} />
 
       {editing && (
         <BuildingDialog

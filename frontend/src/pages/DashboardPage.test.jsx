@@ -251,6 +251,43 @@ describe('DashboardPage', () => {
       }
     })
 
+    describe('with a large team', () => {
+      // Engineer A has 1 open incident, B has 2, ... in name order, so the busiest are the last ones
+      const team = (size) =>
+        Array.from({ length: size }, (_, index) => ({
+          assignee_id: `t-${index}`,
+          assignee: `Engineer ${String.fromCharCode(65 + index)}`,
+          is_available: true,
+          is_active: true,
+          max_open_tickets: 20,
+          open: index + 1,
+        }))
+      const names = () =>
+        section('Work across engineers')
+          .getAllByRole('progressbar')
+          .map((bar) => bar.getAttribute('aria-label').replace('Workload of ', ''))
+
+      it('shows a team of ten whole, in the order the API sent it', async () => {
+        summary.by_assignee = team(10)
+        await renderDashboard(USERS.admin)
+        expect(names()).toEqual(team(10).map((engineer) => engineer.assignee))
+        expect(section('Work across engineers').queryByRole('link', { name: /more$/ })).not.toBeInTheDocument()
+      })
+
+      it('cuts a larger team to the ten with the most open incidents and links to the rest', async () => {
+        summary.by_assignee = [
+          ...team(12),
+          { ...team(1)[0], assignee_id: 't-tie', assignee: 'Aaron Tie', open: 12 }, // as busy as Engineer L
+        ]
+        await renderDashboard(USERS.admin)
+        // Most open first; Aaron and Engineer L both have 12, so the name decides
+        expect(names()).toEqual(['Aaron Tie', 'Engineer L', ...'KJIHGFED'.split('').map((letter) => `Engineer ${letter}`)])
+        const work = section('Work across engineers')
+        expect(work.getByText(/Showing the 10 with the most open incidents/)).toBeInTheDocument()
+        expect(work.getByRole('link', { name: 'and 3 more' })).toHaveAttribute('href', '/engineers')
+      })
+    })
+
     it('shows how work is spread across the engineers and who is unavailable', async () => {
       await renderDashboard(USERS.admin)
       const work = section('Work across engineers')

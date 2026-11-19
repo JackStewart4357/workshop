@@ -486,4 +486,77 @@ describe('EngineersPage', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
   })
+
+  describe('with many engineers', () => {
+    // Lena and Priya from above, plus enough others to need searching and paging
+    const withExtra = (count) => [
+      ...profiles,
+      ...Array.from({ length: count }, (_, index) => ({
+        ...profiles[1],
+        id: `x-${index}`,
+        full_name: `Engineer ${String(index + 1).padStart(2, '0')}`,
+        email: `engineer${index + 1}@acme.inc`,
+        specialism: index % 2 ? 'Plumbing' : 'Electrical',
+      })),
+    ]
+    const shownEngineers = () => screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'))
+
+    it('leaves a handful of engineers exactly as they were: nothing to search or page', async () => {
+      await renderPage()
+      expect(shownEngineers()).toEqual(['Lena Fischer', 'Priya Sharma'])
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+      expect(screen.queryByText(/^Showing \d+ of/)).not.toBeInTheDocument()
+    })
+
+    it('shows the cards 20 at a time', async () => {
+      profiles = withExtra(23) // 25 in all
+      const { user } = await renderPage()
+      expect(shownEngineers()).toHaveLength(20)
+      expect(screen.getByText('Showing 20 of 25')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: 'Show 5 more' }))
+      expect(shownEngineers()).toHaveLength(25)
+      expect(screen.queryByRole('button', { name: /more$/ })).not.toBeInTheDocument()
+    })
+
+    it('finds engineers by name, email or specialism, whatever the case', async () => {
+      profiles = withExtra(23)
+      const { user } = await renderPage()
+      const box = screen.getByRole('searchbox', { name: 'Find an engineer' })
+
+      await user.type(box, ' PRIYA ') // her name
+      expect(shownEngineers()).toEqual(['Priya Sharma'])
+      await user.clear(box)
+      await user.type(box, 'lena.engineer@') // an email
+      expect(shownEngineers()).toEqual(['Lena Fischer'])
+      await user.clear(box)
+      await user.type(box, 'plumb') // a specialism: every second extra engineer
+      expect(shownEngineers()).toHaveLength(11)
+      expect(screen.queryByText(/^Showing/)).not.toBeInTheDocument()
+
+      await user.clear(box)
+      await user.type(box, 'nobody like this')
+      expect(screen.queryByRole('region')).not.toBeInTheDocument()
+      expect(screen.getByText('No engineers match.')).toBeInTheDocument()
+
+      await user.clear(box)
+      expect(shownEngineers()).toHaveLength(20)
+    })
+
+    it('still edits and removes an engineer found by searching', async () => {
+      profiles = withExtra(23)
+      const { calls, user } = await renderPage({
+        [`DELETE ${API}/profiles/x-22`]: () => {
+          profiles = profiles.filter((profile) => profile.id !== 'x-22')
+          return { status: 204 }
+        },
+      })
+      await user.type(screen.getByRole('searchbox', { name: 'Find an engineer' }), 'engineer 23') // on the second page
+      await user.click(within(card('Engineer 23')).getByRole('button', { name: 'Remove Engineer 23' }))
+      await user.click(screen.getByRole('button', { name: 'Remove' }))
+
+      await waitFor(() => expect(screen.getByText('No engineers match.')).toBeInTheDocument())
+      expect(writes(calls)).toMatchObject([{ method: 'DELETE', path: `${API}/profiles/x-22` }])
+    })
+  })
 })

@@ -26,6 +26,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
+import ShowMore from '../components/ShowMore.jsx'
 import PasswordField from '../components/PasswordField.jsx'
 import { useAuth } from '../context/AuthContext.js'
 import * as engineers from '../services/engineersService.js'
@@ -33,6 +34,7 @@ import { listEngineerFeedback, listRatingSummaries } from '../services/feedbackS
 import { formatDate } from '../utils/format.js'
 import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
+import { useShowMore } from '../utils/useShowMore.js'
 import {
   EMAIL_DOMAIN,
   NAME_MAX_LENGTH,
@@ -51,6 +53,9 @@ const PROFILE_RULES = {
   specialism: validateRequired('Specialism', SPECIALISM_MAX_LENGTH),
   max_open_tickets: validateMaxTickets,
 }
+// Up to this many engineers are shown whole; with more, a search box and a page at a time
+const FEW_ENGINEERS = 5
+const PAGE_SIZE = 20
 const ADD_RULES = { ...PROFILE_RULES, email: validateCompanyEmail, password: validateNewPassword }
 const EDIT_RULES = {
   ...PROFILE_RULES,
@@ -257,6 +262,19 @@ export default function EngineersPage() {
     useServerList(loadEngineers)
   const [editing, setEditing] = useState(null) // the engineer in the dialog; {} for a new one
   const [reading, setReading] = useState(null) // the engineer whose feedback is open
+  const [search, setSearch] = useState('')
+
+  // A handful of engineers is shown whole, as before. With more there is a search box, and
+  // the cards come a page at a time.
+  const all = items?.profiles ?? []
+  const many = all.length > FEW_ENGINEERS
+  const wanted = many ? search.trim().toLowerCase() : ''
+  const found = wanted
+    ? all.filter((engineer) =>
+        [engineer.full_name, engineer.email, engineer.specialism].some((text) => text.toLowerCase().includes(wanted)),
+      )
+    : all
+  const paging = useShowMore(found, PAGE_SIZE)
 
   if (loadError) return <LoadFailed title="Engineers" message={loadError} onRetry={retry} />
   if (!items) return <LoadingScreen label="Loading engineers" />
@@ -276,10 +294,22 @@ export default function EngineersPage() {
         </Alert>
       )}
       {items.profiles.length === 0 && <Typography color="text.secondary">There are no engineers yet.</Typography>}
+      {many && (
+        <TextField
+          label="Find an engineer"
+          type="search"
+          size="small"
+          margin="none"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          helperText="By name, email or specialism"
+        />
+      )}
+      {many && found.length === 0 && <Typography color="text.secondary">No engineers match.</Typography>}
 
       {/* One column on a phone, two from tablet width up */}
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-        {items.profiles.map((engineer) => (
+        {paging.visible.map((engineer) => (
           <Paper key={engineer.id} component="section" aria-label={engineer.full_name} variant="outlined" sx={{ p: 2 }}>
             <Stack direction="row" sx={{ alignItems: 'flex-start', gap: 0.5 }}>
               <Box sx={{ flexGrow: 1, minWidth: 0, overflowWrap: 'anywhere' }}>
@@ -341,6 +371,7 @@ export default function EngineersPage() {
           </Paper>
         ))}
       </Box>
+      <ShowMore {...paging} />
 
       {editing && (
         <EngineerDialog
