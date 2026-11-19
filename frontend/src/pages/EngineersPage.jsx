@@ -31,7 +31,7 @@ import { useAuth } from '../context/AuthContext.js'
 import * as engineers from '../services/engineersService.js'
 import { listEngineerFeedback, listRatingSummaries } from '../services/feedbackService.js'
 import { formatDate } from '../utils/format.js'
-import { useDialogForm } from '../utils/useDialogForm.js'
+import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
 import {
   EMAIL_DOMAIN,
@@ -106,12 +106,19 @@ function EngineerDialog({ engineer, managers, onSave, onClose }) {
 
   return (
     <Dialog open onClose={saving ? undefined : onClose} fullWidth maxWidth="xs" aria-labelledby="engineer-dialog-title">
-      <Box component="form" ref={formRef} noValidate onSubmit={handleSubmit}>
+      <Box
+        component="form"
+        ref={formRef}
+        noValidate
+        onSubmit={handleSubmit}
+        // The fields scroll between the title and the buttons, so Save stays in view on a phone
+        sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
+      >
         <DialogTitle id="engineer-dialog-title">{isNew ? 'Add engineer' : 'Edit engineer'}</DialogTitle>
         <DialogContent>
-          {!isNew && <DialogContentText>Signs in as {engineer.email}</DialogContentText>}
+          {!isNew && <DialogContentText sx={{ overflowWrap: 'anywhere' }}>Signs in as {engineer.email}</DialogContentText>}
           {formError && <Alert severity="error">{formError}</Alert>}
-          <TextField label="Full name" autoFocus required {...field('full_name')} />
+          <TextField label="Full name" inputRef={focusOnOpen} required {...field('full_name')} />
           {isNew && (
             <>
               <TextField
@@ -287,7 +294,7 @@ export default function EngineersPage() {
                 onClick={() =>
                   setRemoving({
                     what: engineer.full_name,
-                    note: 'Their sign-in is removed with the profile.',
+                    note: `Their sign-in (${engineer.email}) is removed with the profile.`,
                     run: () => engineers.removeEngineer(engineer.id),
                   })
                 }
@@ -302,12 +309,16 @@ export default function EngineersPage() {
               {engineer.manager_name ? `Manager: ${engineer.manager_name}` : 'No manager yet'}
             </Typography>
             <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 1, my: 1.5 }}>
-              <Chip
-                size="small"
-                color={engineer.is_available ? 'success' : 'default'}
-                label={engineer.is_available ? 'Available' : 'Unavailable'}
-              />
-              {!engineer.is_active && <Chip size="small" color="warning" label="Deactivated" />}
+              {/* A deactivated engineer cannot sign in, so their availability says nothing */}
+              {engineer.is_active ? (
+                <Chip
+                  size="small"
+                  color={engineer.is_available ? 'success' : 'default'}
+                  label={engineer.is_available ? 'Available' : 'Unavailable'}
+                />
+              ) : (
+                <Chip size="small" color="warning" label="Deactivated" />
+              )}
             </Stack>
 
             <Typography>
@@ -317,7 +328,7 @@ export default function EngineersPage() {
               variant="determinate"
               aria-label={`Workload of ${engineer.full_name}`}
               // An engineer can hold more than their maximum (it was lowered, or an admin insisted)
-              value={Math.min(100, (engineer.open_tickets / engineer.max_open_tickets) * 100)}
+              value={Math.min(100, Math.round((engineer.open_tickets / engineer.max_open_tickets) * 100))}
               color={engineer.open_tickets >= engineer.max_open_tickets ? 'warning' : 'primary'}
               sx={{ mt: 0.5, height: 8, borderRadius: 4 }}
             />

@@ -30,7 +30,7 @@ import { listEngineers } from '../services/engineersService.js'
 import { getFeedbackState, giveFeedback } from '../services/feedbackService.js'
 import * as incidents from '../services/incidentsService.js'
 import { formatDateTime, locationOf } from '../utils/format.js'
-import { useDialogForm } from '../utils/useDialogForm.js'
+import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
 import {
   COMMENT_MAX_LENGTH,
@@ -91,7 +91,7 @@ function MoveDialog({ move, onMove, onClose }) {
         <DialogContent>
           {formError && <Alert severity="error">{formError}</Alert>}
           {move.ask ? (
-            <TextField label={move.ask} autoFocus required multiline minRows={2} {...field('reason')} />
+            <TextField label={move.ask} inputRef={focusOnOpen} required multiline minRows={2} {...field('reason')} />
           ) : (
             <DialogContentText>
               A closed incident is final: it cannot be reopened or changed, and takes no more notes.

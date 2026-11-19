@@ -82,13 +82,14 @@ async function send(path, { method = 'GET', body, token } = {}) {
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (token) headers.Authorization = `Bearer ${token}`
 
-  let response
+  let response, text
   try {
     response = await fetch(`${API_URL}${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
+    text = await response.text() // the connection can still drop while the body arrives
   } catch {
     throw new ApiError({
       status: 0,
@@ -97,7 +98,6 @@ async function send(path, { method = 'GET', body, token } = {}) {
     })
   }
 
-  const text = await response.text()
   let data = null
   if (text) {
     try {

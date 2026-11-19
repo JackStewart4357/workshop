@@ -20,7 +20,7 @@ import ConfirmDialog from '../components/ConfirmDialog.jsx'
 import LoadFailed from '../components/LoadFailed.jsx'
 import LoadingScreen from '../components/LoadingScreen.jsx'
 import * as facilities from '../services/facilitiesService.js'
-import { useDialogForm } from '../utils/useDialogForm.js'
+import { focusOnOpen, useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
 import {
   ADDRESS_MAX_LENGTH,
@@ -53,7 +53,7 @@ function BuildingDialog({ building, onSave, onClose }) {
         <DialogTitle id="building-dialog-title">{building.id ? 'Edit building' : 'Add building'}</DialogTitle>
         <DialogContent>
           {formError && <Alert severity="error">{formError}</Alert>}
-          <TextField label="Name" autoFocus required {...field('name')} />
+          <TextField label="Name" inputRef={focusOnOpen} required {...field('name')} />
           <TextField label="Address" required {...field('address')} />
         </DialogContent>
         <DialogActions>

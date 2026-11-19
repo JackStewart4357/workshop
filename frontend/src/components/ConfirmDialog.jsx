@@ -8,7 +8,12 @@ import DialogTitle from '@mui/material/DialogTitle'
 /** "Remove X?" Nothing is removed until the admin confirms; both buttons hold while it is sent. */
 export default function ConfirmDialog({ what, note, busy, onConfirm, onCancel }) {
   return (
-    <Dialog open onClose={busy ? undefined : onCancel} aria-labelledby="remove-dialog-title">
+    <Dialog
+      open
+      onClose={busy ? undefined : onCancel}
+      aria-labelledby="remove-dialog-title"
+      sx={{ overflowWrap: 'anywhere' }} // a long name or email wraps instead of running off a phone screen
+    >
       <DialogTitle id="remove-dialog-title">Remove {what}?</DialogTitle>
       <DialogContent>
         <DialogContentText>{note} This cannot be undone.</DialogContentText>

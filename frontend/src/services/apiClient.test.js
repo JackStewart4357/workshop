@@ -57,6 +57,12 @@ describe('api', () => {
     expect(error).toMatchObject({ status: 0, code: 'network_error' })
     expect(error.message).toMatch(/cannot reach the server/i)
   })
+
+  it('reports a connection that drops while the answer is arriving the same way', async () => {
+    const answer = { ok: true, status: 200, text: () => Promise.reject(new TypeError('NetworkError')) }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer))
+    await expect(client.api('/api/things', { auth: false })).rejects.toMatchObject({ code: 'network_error' })
+  })
 })
 
 describe('token storage', () => {

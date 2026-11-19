@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { useFocusAfterFailedSubmit } from './useFocusAfterFailedSubmit.js'
 import { validateForm } from './validation.js'
 
+/** For the first field's inputRef. `autoFocus` is lost in a dialog under StrictMode (the dev server). */
+export const focusOnOpen = (input) => input?.focus()
+
 /**
  * The logic of a form in a dialog: check the fields, lock the form while it is being
  * saved, put the API's complaints under the right field, and close when it worked.

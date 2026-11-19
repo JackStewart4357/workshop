@@ -96,7 +96,7 @@ describe('EngineersPage', () => {
 
     // Lena holds more than her maximum: the bar stops at full
     const lena = within(card('Lena Fischer'))
-    expect(lena.getByText('Unavailable')).toBeInTheDocument()
+    expect(lena.queryByText('Unavailable')).not.toBeInTheDocument() // deactivated says it all
     expect(lena.getByText('Deactivated')).toBeInTheDocument()
     expect(lena.getByText('No manager yet')).toBeInTheDocument()
     expect(lena.getByText('4 of 3 open tickets')).toBeInTheDocument()
@@ -327,7 +327,7 @@ describe('EngineersPage', () => {
     })
     await user.click(screen.getByRole('button', { name: 'Remove Lena Fischer' }))
     const dialog = screen.getByRole('dialog', { name: 'Remove Lena Fischer?' })
-    expect(dialog).toHaveTextContent('Their sign-in is removed with the profile. This cannot be undone.')
+    expect(dialog).toHaveTextContent('Their sign-in (lena.engineer@acme.inc) is removed with the profile. This cannot be undone.')
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(writes(calls)).toEqual([])
