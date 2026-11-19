@@ -161,6 +161,7 @@ def test_login_returns_the_user_and_working_tokens(auth, alice):
         "passw0rd1 ",
         "passw0rd1\n",
         "pass w0rd1",
+        "PASSW0RD1",  # capital letters count as letters
     ],
 )
 def test_any_password_accepted_at_registration_can_log_in(auth, password):

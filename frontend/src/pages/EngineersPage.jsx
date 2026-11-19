@@ -66,6 +66,9 @@ function EngineerDialog({ engineer, managers, onSave, onClose }) {
   const { user } = useAuth()
   const isNew = !engineer.id
   const canManage = (id) => managers.some((manager) => manager.id === id)
+  // Feedback on an engineer is for their manager only, so only that manager can hand them
+  // to someone else (the API enforces it). Without a working manager, any admin can set one.
+  const managerLocked = !isNew && canManage(engineer.manager_id) && engineer.manager_id !== user.id
   const { values, formError, saving, formRef, handleChange, handleSubmit, field } = useDialogForm({
     initial: isNew
       ? { full_name: '', email: '', password: '', specialism: '', max_open_tickets: '5' }
@@ -130,7 +133,13 @@ function EngineerDialog({ engineer, managers, onSave, onClose }) {
                 select
                 label="Manager"
                 required
-                {...field('manager_id', 'The only person who sees feedback about this engineer')}
+                {...field(
+                  'manager_id',
+                  managerLocked
+                    ? `Only ${engineer.manager_name} can hand this engineer to another manager`
+                    : 'The only person who sees feedback about this engineer',
+                )}
+                disabled={saving || managerLocked}
               >
                 {managers.map((manager) => (
                   <MenuItem key={manager.id} value={manager.id}>

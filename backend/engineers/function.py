@@ -31,6 +31,7 @@ PROFILE_RULES = {
     "max_open_tickets": clean_int("Max open tickets", 1, 50),
 }
 NOT_A_MANAGER = "Choose a facility admin as the manager"
+NOT_YOURS = "Only the engineer's current manager can hand them to another manager"
 IN_USE = "This engineer has incident history and cannot be removed. Deactivate them instead."
 
 # One engineer as the API returns it. Open tickets are the incidents assigned to the
@@ -88,7 +89,7 @@ def create_profile(event, admin):
 
 
 @protected("ADMIN")
-def update_profile(event, _admin, profile_id):
+def update_profile(event, admin, profile_id):
     """Every field is sent each time. Setting is_active to false blocks the engineer's
     sign-in at once: current_user() refuses inactive users."""
     fields = validate(
@@ -103,19 +104,30 @@ def update_profile(event, _admin, profile_id):
     if not query("SELECT 1 AS found FROM users WHERE id = %s AND role = 'ADMIN' AND is_active", (fields["manager_id"],)):
         raise ApiError(400, "validation_error", "Some fields are invalid", {"manager_id": NOT_A_MANAGER})
     with transaction():
-        profile = query(
-            "UPDATE engineer_profiles SET specialism = %s, max_open_tickets = %s, is_available = %s, "
-            "manager_id = %s, updated_at = now() WHERE id = %s RETURNING user_id",
-            (fields["specialism"], fields["max_open_tickets"], fields["is_available"], fields["manager_id"], profile_id),
+        current = query(
+            "SELECT p.user_id, p.manager_id, COALESCE(m.role = 'ADMIN' AND m.is_active, FALSE) AS managed "
+            "FROM engineer_profiles p LEFT JOIN users m ON m.id = p.manager_id WHERE p.id = %s FOR UPDATE OF p",
+            (profile_id,),
         )
-        if not profile:
+        if not current:
             raise not_found()
+        # Feedback on an engineer is for their manager only, so another admin must not be
+        # able to take an engineer over. With no working manager, any admin may step in.
+        handing_over = str(current["manager_id"]) != fields["manager_id"].lower()
+        if handing_over and current["managed"] and current["manager_id"] != admin["id"]:
+            raise ApiError(403, "access_denied", NOT_YOURS)
+        query(
+            "UPDATE engineer_profiles SET specialism = %s, max_open_tickets = %s, is_available = %s, "
+            "manager_id = %s, updated_at = now() WHERE id = %s",
+            (fields["specialism"], fields["max_open_tickets"], fields["is_available"], fields["manager_id"], profile_id),
+            fetch=False,
+        )
         # Deactivating also bumps token_version, so tokens issued before it stay dead even
         # if the engineer is reactivated later: they have to sign in again.
         query(
             "UPDATE users SET full_name = %s, is_active = %s, "
             "token_version = token_version + CASE WHEN %s THEN 0 ELSE 1 END, updated_at = now() WHERE id = %s",
-            (fields["full_name"], fields["is_active"], fields["is_active"], profile["user_id"]),
+            (fields["full_name"], fields["is_active"], fields["is_active"], current["user_id"]),
             fetch=False,
         )
     return respond(200, {"profile": query(PROFILES + "WHERE p.id = %s", (profile_id,))})
@@ -129,12 +141,11 @@ def delete_profile(_event, _admin, profile_id):
     try:
         with transaction():
             profile = query("DELETE FROM engineer_profiles WHERE id = %s RETURNING user_id", (profile_id,))
-            if profile:
-                query("DELETE FROM users WHERE id = %s", (profile["user_id"],), fetch=False)
+            if not profile:
+                raise not_found()
+            query("DELETE FROM users WHERE id = %s", (profile["user_id"],), fetch=False)
     except psycopg.errors.ForeignKeyViolation:
         raise ApiError(409, "conflict", IN_USE) from None
-    if not profile:
-        raise not_found()
     return respond(204)
 
 

@@ -37,8 +37,8 @@ beforeEach(() => {
       is_active: true,
       max_open_tickets: 5,
       open_tickets: 2,
-      manager_id: 'u-9',
-      manager_name: 'Morgan Lee',
+      manager_id: USERS.admin.id, // the admin every test signs in as
+      manager_name: 'Facility Admin',
     },
   ]
 })
@@ -87,7 +87,7 @@ describe('EngineersPage', () => {
     expect(priya.getByText('Network & IT hardware')).toBeInTheDocument()
     expect(priya.getByText('Available')).toBeInTheDocument()
     expect(priya.queryByText('Deactivated')).not.toBeInTheDocument()
-    expect(priya.getByText('Manager: Morgan Lee')).toBeInTheDocument()
+    expect(priya.getByText('Manager: Facility Admin')).toBeInTheDocument()
     expect(priya.getByText('2 of 5 open tickets')).toBeInTheDocument()
     expect(priya.getByRole('progressbar', { name: 'Workload of Priya Sharma' })).toHaveAttribute('aria-valuenow', '40')
 
@@ -220,7 +220,7 @@ describe('EngineersPage', () => {
     expect(dialog.getByLabelText(/full name/i)).toHaveValue('Priya Sharma')
     expect(dialog.getByLabelText(/specialism/i)).toHaveValue('Network & IT hardware')
     expect(dialog.getByLabelText(/max open tickets/i)).toHaveValue(5)
-    expect(dialog.getByRole('combobox', { name: /manager/i })).toHaveTextContent('Morgan Lee')
+    expect(dialog.getByRole('combobox', { name: /manager/i })).toHaveTextContent('Facility Admin')
     expect(dialog.getByRole('switch', { name: 'Available for new tickets' })).toBeChecked()
     expect(dialog.getByRole('switch', { name: 'Account active' })).toBeChecked()
 
@@ -229,7 +229,7 @@ describe('EngineersPage', () => {
     await user.clear(dialog.getByLabelText(/max open tickets/i))
     await user.type(dialog.getByLabelText(/max open tickets/i), '8')
     await user.click(dialog.getByRole('combobox', { name: /manager/i }))
-    await user.click(screen.getByRole('option', { name: 'Facility Admin' }))
+    await user.click(screen.getByRole('option', { name: 'Morgan Lee' }))
     await user.click(dialog.getByRole('switch', { name: 'Available for new tickets' }))
     await user.click(dialog.getByRole('button', { name: 'Save' }))
 
@@ -245,7 +245,7 @@ describe('EngineersPage', () => {
           full_name: 'Priya Sharma',
           specialism: 'Network & Wi-Fi',
           max_open_tickets: 8,
-          manager_id: USERS.admin.id,
+          manager_id: 'u-9',
           is_available: false,
           is_active: true,
         },
@@ -260,7 +260,24 @@ describe('EngineersPage', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await within(card('Priya Sharma')).findByText('Deactivated')).toBeInTheDocument()
-    expect(writes(calls)[0].body).toMatchObject({ is_active: false, is_available: true, manager_id: 'u-9' })
+    expect(writes(calls)[0].body).toMatchObject({ is_active: false, is_available: true, manager_id: USERS.admin.id })
+  })
+
+  it('lets only the current manager hand an engineer over: other admins see the choice locked', async () => {
+    profiles[1] = { ...profiles[1], manager_id: 'u-9', manager_name: 'Morgan Lee' }
+    const { calls, user } = await renderPage({ [`PATCH ${API}/profiles/e-2`]: savePriya })
+    await user.click(screen.getByRole('button', { name: 'Edit Priya Sharma' }))
+    const dialog = within(screen.getByRole('dialog'))
+    const manager = dialog.getByRole('combobox', { name: /manager/i })
+    expect(manager).toHaveTextContent('Morgan Lee')
+    expect(manager).toHaveAttribute('aria-disabled', 'true')
+    expect(dialog.getByText('Only Morgan Lee can hand this engineer to another manager')).toBeInTheDocument()
+
+    // Everything else can still be changed, and the manager is sent back as it was
+    await user.click(dialog.getByRole('switch', { name: 'Available for new tickets' }))
+    await user.click(dialog.getByRole('button', { name: 'Save' }))
+    expect(await within(card('Priya Sharma')).findByText('Unavailable')).toBeInTheDocument()
+    expect(writes(calls)[0].body).toMatchObject({ is_available: false, manager_id: 'u-9' })
   })
 
   it('offers the admin who is editing as manager when the engineer has none, or theirs has left', async () => {

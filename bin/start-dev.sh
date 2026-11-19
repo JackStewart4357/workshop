@@ -113,6 +113,18 @@ if [ "$PG_OK" = false ]; then
     done
 fi
 
+# Apply the schema on every start, so a new table or column reaches the local database the
+# same way it reaches AWS (where deploy-backend.sh does it through the dbsetup Lambda).
+# Safe to repeat: schema.sql only creates what is missing.
+if PGPASSWORD="${POSTGRES_PASS:-postgres123}" psql -h localhost -U "${POSTGRES_USER:-postgres}" \
+        -d "${POSTGRES_NAME:-postgres}" -v ON_ERROR_STOP=1 -q \
+        -f "$PROJECT_ROOT/backend/_db/schema.sql" > /tmp/schema-apply.log 2>&1; then
+    echo -e "  ✓ Database schema is up to date"
+else
+    echo -e "  ✗ Could not apply backend/_db/schema.sql (see /tmp/schema-apply.log)"
+    exit 1
+fi
+
 echo ""
 
 # ============================================================

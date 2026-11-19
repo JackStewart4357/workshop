@@ -123,11 +123,14 @@ def test_an_id_that_is_not_a_uuid_is_an_unknown_path(engineers, admin):
 # --- creating --------------------------------------------------------------------------
 
 
-def test_creating_an_engineer_returns_the_profile_managed_by_the_admin_who_created_it(engineers, admin):
+def test_creating_an_engineer_returns_the_profile_managed_by_the_admin_who_created_it(engineers):
+    new_user("ADMIN", "Abe Admin")  # the manager is the admin who asked, not just any admin
+    admin = sign_in_as("ADMIN")
+    new_user("ADMIN", "Zed Admin")
     status, body = invoke(
         engineers, "POST", "/api/engineers/profiles", token=admin, body={**SAM, "email": "  Sam.Engineer@ACME.inc "}
     )
-    me = db.query("SELECT id, full_name FROM users WHERE role = 'ADMIN'")
+    me = db.query("SELECT id, full_name FROM users WHERE full_name = 'Admin'")
     assert status == 201
     assert body == {
         "profile": {
@@ -211,7 +214,8 @@ def test_no_engineers_is_an_empty_list(engineers, admin):
 
 def test_engineers_are_listed_by_name_with_the_tickets_they_still_have_open(engineers, admin):
     zoe = add(engineers, admin, email="zoe@acme.inc", full_name="Zoe Adams")
-    amir = add(engineers, admin, email="amir@acme.inc", full_name="Amir Khan")
+    amir = add(engineers, admin, email="zz.amir@acme.inc", full_name="Amir Khan")
+    add(engineers, admin, email="a.zoe@acme.inc", full_name="Zoe Adams")  # same name: the email decides
     reporter = new_user("EMPLOYEE", "Reporter")
     for status in ("OPEN", "IN_PROGRESS", "BLOCKED", "RESOLVED", "CLOSED"):
         report_incident(reporter, zoe["id"], status)
@@ -219,11 +223,21 @@ def test_engineers_are_listed_by_name_with_the_tickets_they_still_have_open(engi
     report_incident(reporter)  # assigned to nobody
 
     profiles = listed(engineers, admin)
-    assert [(p["full_name"], p["open_tickets"]) for p in profiles] == [("Amir Khan", 1), ("Zoe Adams", 3)]
+    assert [(p["email"], p["open_tickets"]) for p in profiles] == [
+        ("zz.amir@acme.inc", 1),
+        ("a.zoe@acme.inc", 0),
+        ("zoe@acme.inc", 3),
+    ]
+
+
+def test_an_engineer_with_no_manager_yet_is_still_listed(engineers, admin, sam):
+    # Profiles saved before the manager column existed have none
+    db.query("UPDATE engineer_profiles SET manager_id = NULL", fetch=False)
+    assert listed(engineers, admin) == [{**sam, "manager_id": None, "manager_name": None}]
 
 
 def test_managers_are_the_active_admins_by_name(engineers, admin):
-    zed = new_user("ADMIN", "Zed Admin")
+    abe = new_user("ADMIN", "Abe Admin")  # created after "Admin" but listed before
     new_user("ADMIN", "Left The Company", is_active=False)
     new_user("ENGINEER", "An Engineer")
     new_user("EMPLOYEE", "An Employee")
@@ -231,7 +245,7 @@ def test_managers_are_the_active_admins_by_name(engineers, admin):
 
     assert invoke(engineers, "GET", "/api/engineers/managers", token=admin) == (
         200,
-        {"managers": [{"id": str(me), "full_name": "Admin"}, {"id": str(zed), "full_name": "Zed Admin"}]},
+        {"managers": [{"id": str(abe), "full_name": "Abe Admin"}, {"id": str(me), "full_name": "Admin"}]},
     )
 
 
@@ -271,6 +285,7 @@ def test_deactivating_an_engineer_ends_their_sessions_for_good(engineers, admin,
 
     status, body = invoke(engineers, "PATCH", f"/profiles/{sam['id']}", token=admin, body=edited(sam, is_active=False))
     assert (status, body["profile"]["is_active"]) == (200, False)
+    assert listed(engineers, admin) == [body["profile"]]  # still listed, so they can be reactivated
     assert invoke(auth_service, "GET", "/me", token=token)[0] == 401
     assert invoke(auth_service, "POST", "/login", body=SAM)[0] != 200
 
@@ -319,9 +334,51 @@ def test_only_an_active_admin_can_be_the_manager(engineers, admin, sam, who):
     assert listed(engineers, admin) == [sam]
 
 
+def test_another_admin_can_change_an_engineer_but_cannot_take_them_over(engineers, admin, sam):
+    other_admin = sign_in_as("ADMIN")
+    other_id = str(db.query("SELECT id FROM users WHERE role = 'ADMIN' AND id <> %s", (sam["manager_id"],))["id"])
+
+    status, body = invoke(
+        engineers, "PATCH", f"/profiles/{sam['id']}", token=other_admin, body=edited(sam, specialism="Roofing", manager_id=other_id)
+    )
+    assert (status, body["error"]["code"]) == (403, "access_denied")
+    assert body["error"]["message"] == "Only the engineer's current manager can hand them to another manager"
+    assert listed(engineers, admin) == [sam]
+
+    # ...the same edit without the takeover is fine, however the manager's id is written
+    same_manager = edited(sam, specialism="Roofing", manager_id=sam["manager_id"].upper())
+    status, body = invoke(engineers, "PATCH", f"/profiles/{sam['id']}", token=other_admin, body=same_manager)
+    assert (status, body["profile"]["specialism"], body["profile"]["manager_id"]) == (200, "Roofing", sam["manager_id"])
+
+
+@pytest.mark.parametrize("manager", ["none", "inactive"])
+def test_any_admin_can_step_in_when_an_engineer_has_no_working_manager(engineers, admin, sam, manager):
+    if manager == "none":
+        db.query("UPDATE engineer_profiles SET manager_id = NULL WHERE id = %s", (sam["id"],), fetch=False)
+    else:
+        db.query("UPDATE users SET is_active = FALSE WHERE id = %s", (sam["manager_id"],), fetch=False)
+    other_admin = sign_in_as("ADMIN")
+    other_id = str(db.query("SELECT id FROM users WHERE role = 'ADMIN' AND id <> %s", (sam["manager_id"],))["id"])
+
+    status, body = invoke(
+        engineers, "PATCH", f"/profiles/{sam['id']}", token=other_admin, body=edited(sam, manager_id=other_id)
+    )
+    assert (status, body["profile"]["manager_id"]) == (200, other_id)
+
+
 def test_changing_an_unknown_engineer_is_404(engineers, admin, sam):
     status, body = invoke(engineers, "PATCH", f"/profiles/{MISSING}", token=admin, body=edited(sam, full_name="Changed"))
     assert (status, body["error"]["message"]) == (404, "Engineer not found")
+    assert listed(engineers, admin) == [sam]
+
+
+def test_a_change_is_saved_to_the_profile_and_the_login_together_or_not_at_all(engineers, admin, sam, monkeypatch):
+    # Force the second update to fail: users.full_name cannot be null
+    monkeypatch.setitem(engineers.PROFILE_RULES, "full_name", lambda _value: None)
+    status, body = invoke(
+        engineers, "PATCH", f"/profiles/{sam['id']}", token=admin, body=edited(sam, specialism="Changed")
+    )
+    assert (status, body["error"]["code"]) == (500, "internal_error")
     assert listed(engineers, admin) == [sam]
 
 
