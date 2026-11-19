@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { Link as RouterLink } from 'react-router-dom'
 import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
@@ -11,8 +12,10 @@ import DialogTitle from '@mui/material/DialogTitle'
 import FormControlLabel from '@mui/material/FormControlLabel'
 import IconButton from '@mui/material/IconButton'
 import LinearProgress from '@mui/material/LinearProgress'
+import Link from '@mui/material/Link'
 import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
+import Rating from '@mui/material/Rating'
 import Stack from '@mui/material/Stack'
 import Switch from '@mui/material/Switch'
 import TextField from '@mui/material/TextField'
@@ -26,6 +29,8 @@ import LoadingScreen from '../components/LoadingScreen.jsx'
 import PasswordField from '../components/PasswordField.jsx'
 import { useAuth } from '../context/AuthContext.js'
 import * as engineers from '../services/engineersService.js'
+import { listEngineerFeedback, listRatingSummaries } from '../services/feedbackService.js'
+import { formatDate } from '../utils/format.js'
 import { useDialogForm } from '../utils/useDialogForm.js'
 import { useServerList } from '../utils/useServerList.js'
 import {
@@ -52,10 +57,15 @@ const EDIT_RULES = {
   manager_id: (value) => (value ? '' : 'Choose a facility admin as the manager'),
 }
 
-// Everything the screen shows: the engineers, and the admins one of them can report to.
+// Everything the screen shows: the engineers, the admins one of them can report to, and a
+// rating summary for each engineer this admin manages (the API sends no others).
 async function loadEngineers() {
-  const [profiles, managers] = await Promise.all([engineers.listEngineers(), engineers.listManagers()])
-  return { profiles, managers }
+  const [profiles, managers, ratings] = await Promise.all([
+    engineers.listEngineers(),
+    engineers.listManagers(),
+    listRatingSummaries().catch(() => []), // an extra: without it the screen still works, minus the ratings
+  ])
+  return { profiles, managers, ratings }
 }
 
 /**
@@ -173,11 +183,73 @@ function EngineerDialog({ engineer, managers, onSave, onClose }) {
   )
 }
 
+/**
+ * The line on an engineer's card that sums up their feedback. The API sends a rating only
+ * for the engineers this admin manages, so on everyone else's card this shows nothing.
+ */
+function RatingSummary({ rating, name, onView }) {
+  if (!rating) return null
+  return (
+    <Stack direction="row" sx={{ alignItems: 'center', flexWrap: 'wrap', columnGap: 1, mt: 1.5, minHeight: 32 }}>
+      <Typography color="text.secondary">
+        {rating.count === 0
+          ? 'No feedback yet'
+          : `Rated ${rating.average} out of 5 from ${rating.count} ${rating.count === 1 ? 'report' : 'reports'}`}
+      </Typography>
+      {rating.count > 0 && (
+        <Button size="small" aria-label={`View feedback on ${name}`} onClick={onView}>
+          View feedback
+        </Button>
+      )}
+    </Stack>
+  )
+}
+
+/**
+ * What the people who reported incidents said about one engineer's work. Only the
+ * engineer's manager can read it: the API refuses everyone else, and says why here.
+ */
+function FeedbackDialog({ engineer, onClose }) {
+  const fetchFeedback = useCallback(() => listEngineerFeedback(engineer.id), [engineer.id])
+  const { items: feedback, loadError } = useServerList(fetchFeedback)
+
+  return (
+    <Dialog open onClose={onClose} fullWidth maxWidth="sm" aria-labelledby="feedback-dialog-title">
+      <DialogTitle id="feedback-dialog-title">Feedback on {engineer.full_name}</DialogTitle>
+      <DialogContent>
+        <DialogContentText sx={{ mb: 1 }}>Only you, as their manager, can see this.</DialogContentText>
+        {loadError && <Alert severity="error">{loadError}</Alert>}
+        {!loadError && !feedback && <LoadingScreen label="Loading feedback" />}
+        {feedback?.length === 0 && <Typography color="text.secondary">No feedback yet</Typography>}
+        {feedback?.map((entry) => (
+          <Box key={entry.id} sx={{ py: 1.5, borderTop: 1, borderColor: 'divider' }}>
+            <Rating value={entry.rating} readOnly size="small" getLabelText={(value) => `${value} out of 5`} />
+            <Typography color={entry.comment ? 'text.primary' : 'text.secondary'} sx={{ overflowWrap: 'anywhere' }}>
+              {entry.comment || 'No comment'}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>
+              {entry.author} on{' '}
+              <Link component={RouterLink} to={`/incidents/${entry.incident_id}`}>
+                {entry.incident}
+              </Link>
+              , {formatDate(entry.created_at)}
+            </Typography>
+          </Box>
+        ))}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
 /** The admin screen for engineer profiles: who they are, whether they are available, and their workload. */
 export default function EngineersPage() {
   const { items, loadError, retry, error, setError, busy, change, removing, setRemoving, confirmRemove } =
     useServerList(loadEngineers)
   const [editing, setEditing] = useState(null) // the engineer in the dialog; {} for a new one
+  const [reading, setReading] = useState(null) // the engineer whose feedback is open
 
   if (loadError) return <LoadFailed title="Engineers" message={loadError} onRetry={retry} />
   if (!items) return <LoadingScreen label="Loading engineers" />
@@ -249,6 +321,12 @@ export default function EngineersPage() {
               color={engineer.open_tickets >= engineer.max_open_tickets ? 'warning' : 'primary'}
               sx={{ mt: 0.5, height: 8, borderRadius: 4 }}
             />
+
+            <RatingSummary
+              rating={items.ratings.find((row) => row.engineer_id === engineer.id)}
+              name={engineer.full_name}
+              onView={() => setReading(engineer)}
+            />
           </Paper>
         ))}
       </Box>
@@ -266,6 +344,7 @@ export default function EngineersPage() {
       {removing && (
         <ConfirmDialog {...removing} busy={busy} onConfirm={confirmRemove} onCancel={() => setRemoving(null)} />
       )}
+      {reading && <FeedbackDialog engineer={reading} onClose={() => setReading(null)} />}
     </Stack>
   )
 }

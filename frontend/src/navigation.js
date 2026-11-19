@@ -1,4 +1,5 @@
 import ApartmentIcon from '@mui/icons-material/Apartment'
+import AssignmentIcon from '@mui/icons-material/Assignment'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import EngineeringIcon from '@mui/icons-material/Engineering'
 
@@ -14,6 +15,7 @@ export const ROLE_LABELS = {
 // is built; the same `roles` list is passed to <ProtectedRoute> so menu and access agree.
 export const NAV_ITEMS = [
   { label: 'Dashboard', path: '/', icon: DashboardIcon, roles: [ROLES.EMPLOYEE, ROLES.ENGINEER, ROLES.ADMIN] },
+  { label: 'Incidents', path: '/incidents', icon: AssignmentIcon, roles: [ROLES.EMPLOYEE, ROLES.ENGINEER, ROLES.ADMIN] },
   { label: 'Facilities', path: '/facilities', icon: ApartmentIcon, roles: [ROLES.ADMIN] },
   { label: 'Engineers', path: '/engineers', icon: EngineeringIcon, roles: [ROLES.ADMIN] },
 ]

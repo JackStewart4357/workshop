@@ -6,6 +6,7 @@ import {
   validateForm,
   validateMaxTickets,
   validateNewPassword,
+  validateOptional,
   validateRequired,
 } from './validation.js'
 
@@ -99,5 +100,17 @@ describe('validateForm', () => {
 
   it('treats a missing value as empty', () => {
     expect(validateForm({}, { email: validateEmail })).toEqual({ email: 'Email is required' })
+  })
+})
+
+describe('validateOptional', () => {
+  const validate = validateOptional('Comment', 10)
+
+  it.each(['', '   ', 'short', '0123456789', '  0123456789  '])('accepts "%s"', (value) => {
+    expect(validate(value)).toBe('')
+  })
+
+  it('rejects text over the limit', () => {
+    expect(validate('01234567890')).toBe('Comment must be at most 10 characters')
   })
 })

@@ -6,11 +6,13 @@ import EngineersPage from './EngineersPage.jsx'
 import { USERS, apiError, mockApi, renderWithProviders } from '../test/helpers.jsx'
 
 const API = '/api/engineers'
+const FEEDBACK = '/api/feedback/engineers'
 const IN_USE = 'This engineer has incident history and cannot be removed. Deactivate them instead.'
 
 // What the fake API holds; a handler changes it and the page's next GET shows the result.
-let profiles, managers
+let profiles, managers, ratings
 beforeEach(() => {
+  ratings = [{ engineer_id: 'e-2', count: 3, average: 4.3 }] // the API sends only the engineers this admin manages
   managers = [
     { id: USERS.admin.id, full_name: 'Facility Admin' },
     { id: 'u-9', full_name: 'Morgan Lee' },
@@ -46,6 +48,7 @@ beforeEach(() => {
 const reads = {
   [`GET ${API}/profiles`]: () => ({ body: { profiles } }),
   [`GET ${API}/managers`]: () => ({ body: { managers } }),
+  [`GET ${FEEDBACK}`]: () => ({ body: { engineers: ratings } }),
 }
 
 // Saves a change to Priya the way the API does, so the next GET shows it.
@@ -387,5 +390,100 @@ describe('EngineersPage', () => {
 
     finish({ status: 204 })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  describe('feedback, for the engineer\'s manager only', () => {
+    const said = [
+      {
+        id: 'fb-2',
+        incident_id: 'i-7',
+        incident: 'Wi-Fi drops',
+        rating: 5,
+        comment: 'Fixed within the hour',
+        author: 'Alice Johnson',
+        created_at: '2026-11-18T12:00:00+00:00',
+      },
+      {
+        id: 'fb-1',
+        incident_id: 'i-3',
+        incident: 'Broken projector',
+        rating: 2,
+        comment: null,
+        author: 'Ben Carter',
+        created_at: '2026-11-10T12:00:00+00:00',
+      },
+    ]
+
+    it('sums up the ratings of an engineer this admin manages and shows nothing for anyone else', async () => {
+      await renderPage()
+      const priya = within(card('Priya Sharma'))
+      expect(priya.getByText('Rated 4.3 out of 5 from 3 reports')).toBeInTheDocument()
+      expect(priya.getByRole('button', { name: 'View feedback on Priya Sharma' })).toBeInTheDocument()
+
+      // Lena is not in the API's answer: this admin does not manage her
+      const lena = within(card('Lena Fischer'))
+      expect(lena.queryByText(/rated|feedback/i)).not.toBeInTheDocument()
+      expect(lena.queryByRole('button', { name: /feedback/i })).not.toBeInTheDocument()
+    })
+
+    it.each([
+      [0, null, 'No feedback yet', false],
+      [1, 5, 'Rated 5 out of 5 from 1 report', true],
+    ])('words the summary for %i reports', async (count, average, words, canOpen) => {
+      ratings = [{ engineer_id: 'e-2', count, average }]
+      await renderPage()
+      expect(within(card('Priya Sharma')).getByText(words)).toBeInTheDocument()
+      expect(screen.queryAllByRole('button', { name: /view feedback/i })).toHaveLength(canOpen ? 1 : 0)
+    })
+
+    it('opens everything said about the engineer: rating, comment, who, which incident and when', async () => {
+      let answer
+      const { calls, user } = await renderPage({
+        [`GET ${FEEDBACK}/e-2`]: () => new Promise((resolve) => (answer = resolve)),
+      })
+      await user.click(screen.getByRole('button', { name: 'View feedback on Priya Sharma' }))
+      const dialog = within(screen.getByRole('dialog', { name: 'Feedback on Priya Sharma' }))
+      expect(dialog.getByRole('progressbar', { name: 'Loading feedback' })).toBeInTheDocument()
+      expect(dialog.getByText('Only you, as their manager, can see this.')).toBeInTheDocument()
+
+      answer({ body: { feedback: said } })
+      expect(await dialog.findByText('Fixed within the hour')).toBeInTheDocument()
+      expect(dialog.getAllByRole('img').map((stars) => stars.getAttribute('aria-label'))).toEqual(['5 out of 5', '2 out of 5'])
+      expect(dialog.getByText('No comment')).toBeInTheDocument() // the second one left no words
+      expect(dialog.getByText(/Alice Johnson on/)).toHaveTextContent('Alice Johnson on Wi-Fi drops, 18 Nov 2026')
+      expect(dialog.getByText(/Ben Carter on/)).toHaveTextContent('Ben Carter on Broken projector, 10 Nov 2026')
+      expect(dialog.getByRole('link', { name: 'Wi-Fi drops' })).toHaveAttribute('href', '/incidents/i-7')
+      expect(dialog.queryByText('No feedback yet')).not.toBeInTheDocument()
+      expect(dialog.queryByRole('progressbar')).not.toBeInTheDocument()
+      expect(calls.at(-1)).toMatchObject({ method: 'GET', path: `${FEEDBACK}/e-2` })
+
+      await user.click(dialog.getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+      expect(writes(calls)).toEqual([]) // reading feedback changes nothing
+    })
+
+    it('shows the API\'s refusal inside the dialog when someone else has become the manager', async () => {
+      const refusal = "Only this engineer's manager can read their feedback"
+      const { user } = await renderPage({ [`GET ${FEEDBACK}/e-2`]: () => apiError(403, 'access_denied', refusal) })
+      await user.click(screen.getByRole('button', { name: 'View feedback on Priya Sharma' }))
+      const dialog = within(screen.getByRole('dialog'))
+      expect(await dialog.findByRole('alert')).toHaveTextContent(refusal)
+      expect(dialog.queryByRole('img')).not.toBeInTheDocument()
+      expect(dialog.queryByRole('progressbar')).not.toBeInTheDocument()
+      expect(dialog.queryByText('No feedback yet')).not.toBeInTheDocument()
+    })
+
+    it('says so when the feedback has gone by the time the dialog opens', async () => {
+      const { user } = await renderPage({ [`GET ${FEEDBACK}/e-2`]: () => ({ body: { feedback: [] } }) })
+      await user.click(screen.getByRole('button', { name: 'View feedback on Priya Sharma' }))
+      expect(await within(screen.getByRole('dialog')).findByText('No feedback yet')).toBeInTheDocument()
+    })
+
+    it('still shows the engineers when the ratings cannot be loaded, just without them', async () => {
+      await renderPage({ [`GET ${FEEDBACK}`]: () => apiError(500, 'internal_error', 'An unexpected error occurred') })
+      expect(within(card('Priya Sharma')).getByText('2 of 5 open tickets')).toBeInTheDocument()
+      expect(screen.queryByText(/rated|feedback/i)).not.toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
   })
 })

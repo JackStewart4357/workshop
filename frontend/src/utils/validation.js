@@ -1,5 +1,5 @@
-// Form checks that mirror the API's rules (backend/auth, backend/facilities and
-// backend/engineers), so most mistakes are caught before a request is sent. The API still
+// Form checks that mirror the API's rules (backend/auth, facilities, engineers, incidents
+// and feedback), so most mistakes are caught before a request is sent. The API still
 // validates everything: these are for speed and clearer feedback, not for security. Each
 // returns an error message or ''.
 
@@ -14,6 +14,11 @@ export const FLOOR_MAX = 200
 export const SPECIALISM_MAX_LENGTH = 100
 export const TICKETS_MIN = 1
 export const TICKETS_MAX = 50
+export const TITLE_MAX_LENGTH = 150
+export const DESCRIPTION_MAX_LENGTH = 4000
+export const NOTE_MAX_LENGTH = 2000
+export const REASON_MAX_LENGTH = 500
+export const COMMENT_MAX_LENGTH = 1000
 
 const EMAIL_PATTERN = /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/
 
@@ -39,6 +44,11 @@ export function validateRequired(label, maxLength) {
     if (value.trim().length > maxLength) return `${label} must be at most ${maxLength} characters`
     return ''
   }
+}
+
+/** For a field that may be left empty, but not be too long. */
+export function validateOptional(label, maxLength) {
+  return (value) => (value.trim().length > maxLength ? `${label} must be at most ${maxLength} characters` : '')
 }
 
 export function validateNewPassword(value) {

@@ -5,9 +5,12 @@ import { ROLES } from './navigation.js'
 import DashboardPage from './pages/DashboardPage.jsx'
 import EngineersPage from './pages/EngineersPage.jsx'
 import FacilitiesPage from './pages/FacilitiesPage.jsx'
+import IncidentDetailPage from './pages/IncidentDetailPage.jsx'
+import IncidentsPage from './pages/IncidentsPage.jsx'
 import LoginPage from './pages/LoginPage.jsx'
 import NotFoundPage from './pages/NotFoundPage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
+import ReportIncidentPage from './pages/ReportIncidentPage.jsx'
 
 // The route map. Public pages first; everything inside <ProtectedRoute> needs a signed-in
 // user and is drawn inside the shared layout (top bar + menu). To limit a page to some
@@ -20,6 +23,9 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
+          <Route path="/incidents" element={<IncidentsPage />} />
+          <Route path="/incidents/new" element={<ReportIncidentPage />} />
+          <Route path="/incidents/:id" element={<IncidentDetailPage />} />
           <Route element={<ProtectedRoute roles={[ROLES.ADMIN]} />}>
             <Route path="/facilities" element={<FacilitiesPage />} />
             <Route path="/engineers" element={<EngineersPage />} />

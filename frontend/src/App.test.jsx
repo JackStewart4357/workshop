@@ -4,7 +4,24 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ThemeProvider } from '@mui/material/styles'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { USERS, apiError, mockApi, session } from './test/helpers.jsx'
+import { USERS, apiError, mockApi as fakeApi, session } from './test/helpers.jsx'
+
+// The dashboard at "/" asks for its numbers on every visit: an empty answer unless a test says otherwise.
+const EMPTY_DASHBOARD = {
+  'GET /api/incidents/summary': () => ({
+    body: {
+      total: 0,
+      by_status: { OPEN: 0, IN_PROGRESS: 0, BLOCKED: 0, RESOLVED: 0, CLOSED: 0 },
+      by_priority: { LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0 },
+      unassigned_open: 0,
+      escalated_open: 0,
+      by_assignee: [],
+      average_hours: { to_acknowledge: null, to_assign: null, to_resolve: null },
+    },
+  }),
+  'GET /api/incidents/tickets': () => ({ body: { incidents: [] } }),
+}
+const mockApi = (routes) => fakeApi({ ...EMPTY_DASHBOARD, ...routes })
 import theme from './theme.js'
 
 const REFRESH_KEY = 'acme.refreshToken'
@@ -282,4 +299,57 @@ describe('App', () => {
     expect(screen.queryByRole('link', { name: 'Engineers' })).not.toBeInTheDocument()
     expect(calls.map((call) => call.path)).toEqual(['/api/auth/refresh'])
   })
+
+  it.each([USERS.employee, USERS.engineer, USERS.admin])(
+    '$role opens Incidents from the menu, then the report form, then an incident by its address',
+    async (who) => {
+      window.localStorage.setItem(REFRESH_KEY, 'refresh-1')
+      const signedIn = (body) => ({ token }) =>
+        token === 'access-2' ? { body } : apiError(401, 'unauthorized', 'Authentication is required')
+      const incident = {
+        id: 'i-1',
+        title: 'Leaking tap',
+        description: 'Drips',
+        status: 'OPEN',
+        priority: 'MEDIUM',
+        category: 'Plumbing',
+        building: 'Headquarters',
+        floor_level: null,
+        seat: null,
+        reporter: 'Alice Johnson',
+        reporter_id: 'u-1',
+        assignee: null,
+        assignee_id: null,
+        is_escalated: false,
+        blocked_reason: null,
+        created_at: '2026-11-18T09:15:00+00:00',
+        updated_at: '2026-11-18T09:15:00+00:00',
+        notes: [],
+        history: [],
+        next_statuses: [],
+        is_staff: false,
+      }
+      mockApi({
+        'POST /api/auth/refresh': () => ({ body: session(who, '2') }),
+        'GET /api/incidents/tickets': signedIn({ incidents: [incident] }),
+        'GET /api/incidents/tickets/i-1': signedIn({ incident }),
+        'GET /api/incidents/categories': signedIn({ categories: [] }),
+        'GET /api/facilities/buildings': signedIn({ buildings: [] }),
+        'GET /api/engineers/profiles': signedIn({ profiles: [] }),
+      })
+      const user = renderApp('/')
+
+      await user.click(await screen.findByRole('link', { name: 'Incidents' }))
+      expect(await screen.findByRole('heading', { name: 'Incidents' })).toBeInTheDocument()
+
+      await user.click(screen.getByRole('link', { name: 'Report incident' }))
+      expect(await screen.findByRole('heading', { name: 'Report an incident' })).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: 'Incidents' })).toHaveClass('active') // the menu still shows where we are
+
+      await user.click(screen.getByRole('link', { name: 'Cancel' }))
+      await user.click(await screen.findByRole('link', { name: /Leaking tap/ }))
+      expect(await screen.findByRole('heading', { name: 'Leaking tap' })).toBeInTheDocument()
+      expect(screen.getAllByRole('main')).toHaveLength(1)
+    },
+  )
 })

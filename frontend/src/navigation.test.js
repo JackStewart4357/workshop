@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { NAV_ITEMS, ROLE_LABELS, ROLES, navItemsFor } from './navigation.js'
 
 describe('navigation', () => {
-  it.each(Object.values(ROLES))('shows the dashboard to %s', (role) => {
-    expect(navItemsFor(role).map((item) => item.path)).toContain('/')
+  it.each(Object.values(ROLES))('shows the dashboard, then the incidents, to %s', (role) => {
+    expect(navItemsFor(role).map((item) => item.path).slice(0, 2)).toEqual(['/', '/incidents'])
   })
 
   it.each(['/facilities', '/engineers'])('shows %s to admins only', (path) => {

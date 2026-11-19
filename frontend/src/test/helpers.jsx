@@ -30,16 +30,17 @@ export function apiError(status, code, message, details) {
 /**
  * Replace fetch with a fake backend.
  *   routes: { 'POST /api/auth/login': (request) => ({ status, body }) }
- * Each handler receives { method, path, body, token }. Returns the list of calls made.
+ * Each handler receives { method, path, query, body, token }. Returns the list of calls made.
  */
 export function mockApi(routes) {
   const calls = []
   const fetchMock = vi.fn(async (url, options = {}) => {
     const method = options.method || 'GET'
-    const path = new URL(url, 'http://localhost').pathname
+    const { pathname: path, searchParams } = new URL(url, 'http://localhost')
     const request = {
       method,
       path,
+      ...(searchParams.size > 0 && { query: Object.fromEntries(searchParams) }), // only when there is one
       body: options.body ? JSON.parse(options.body) : undefined,
       token: options.headers?.Authorization?.replace('Bearer ', ''),
     }
