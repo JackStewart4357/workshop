@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from urllib.parse import urlencode
 
 import pytest
 
@@ -74,7 +75,9 @@ def load_fresh(module):
     return fresh
 
 
-def make_event(method="GET", path="/", body=None, token=None, headers=None, raw_body=None, base64_body=False):
+def make_event(
+    method="GET", path="/", body=None, token=None, headers=None, raw_body=None, base64_body=False, query=None
+):
     """Build a Lambda Function URL (payload v2) event."""
     headers = dict(headers or {})
     if token:
@@ -85,6 +88,7 @@ def make_event(method="GET", path="/", body=None, token=None, headers=None, raw_
     return {
         "requestContext": {"http": {"method": method}},
         "rawPath": path,
+        "rawQueryString": urlencode(query or {}),
         "headers": headers,
         "body": payload,
         "isBase64Encoded": base64_body,

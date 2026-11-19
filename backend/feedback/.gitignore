@@ -1,0 +1,9 @@
+# Only this service's own source is tracked. Everything else in this folder is generated
+# (pip packages from start-dev.sh, shared modules copied by bin/sync-shared.sh).
+# Add a '!/<file>' line for every other source file this service owns.
+/*
+!/.gitignore
+!/requirements.txt
+!/function.py
+!/Dockerfile
+!/server.py

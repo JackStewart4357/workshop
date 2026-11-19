@@ -168,6 +168,21 @@ CREATE TABLE IF NOT EXISTS ai_suggestions (
 
 CREATE INDEX IF NOT EXISTS ai_suggestions_incident_idx ON ai_suggestions (incident_id);
 
+
+-- What the reporter thought of the engineer's work: one per incident, readable only by
+-- that engineer's manager (engineer_profiles.manager_id).
+CREATE TABLE IF NOT EXISTS incident_feedback (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    incident_id UUID NOT NULL UNIQUE REFERENCES incidents (id) ON DELETE CASCADE,
+    engineer_id UUID NOT NULL REFERENCES engineer_profiles (id),   -- the assignee when it was given
+    author_id   UUID NOT NULL REFERENCES users (id),
+    rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment     TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS incident_feedback_engineer_idx ON incident_feedback (engineer_id, created_at DESC);
+
 -- ---------------------------------------------------------------------------
 -- Reference data: starting categories
 -- ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import re
+from urllib.parse import parse_qsl
 
 logger = logging.getLogger()
 
@@ -25,13 +26,19 @@ class ApiError(Exception):
         self.status, self.code, self.message, self.details = status, code, message, details
 
 
+def _json_default(value):
+    """What JSON has no type for: dates and times as ISO 8601 (which JavaScript's Date
+    reads everywhere), ids and anything else as text."""
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
 def respond(status, body=None):
     if body is None:
         return {"statusCode": status, "headers": {}, "body": ""}
     return {
         "statusCode": status,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body, default=str),
+        "body": json.dumps(body, default=_json_default),
     }
 
 
@@ -64,6 +71,11 @@ def json_body(event):
     if not isinstance(data, dict):
         raise ApiError(400, "validation_error", "Request body must be a JSON object")
     return data
+
+
+def query_params(event):
+    """The query string as a dict: '?status=OPEN&q=leak' -> {"status": "OPEN", "q": "leak"}."""
+    return dict(parse_qsl(event.get("rawQueryString") or "", keep_blank_values=True))
 
 
 def validate(data, rules):
@@ -134,6 +146,28 @@ def clean_uuid(label):
         if not isinstance(value, str) or not re.fullmatch(_UUID, value):
             raise ValueError(f"{label} is required")
         return value
+
+    return clean
+
+
+def clean_choice(label, choices):
+    """Cleaner factory: a required value from a fixed list, such as a status."""
+
+    def clean(value):
+        if not isinstance(value, str) or value not in choices:
+            raise ValueError(f"{label} must be one of: {', '.join(choices)}")
+        return value
+
+    return clean
+
+
+def optional(cleaner):
+    """Wrap a cleaner for a field that may be left out: missing, null and blank all become None."""
+
+    def clean(value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return cleaner(value)
 
     return clean
 

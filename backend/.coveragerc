@@ -17,3 +17,4 @@ include_namespace_packages = True
 include =
     _shared/*.py
     */function.py
+    feedback/server.py

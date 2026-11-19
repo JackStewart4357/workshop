@@ -1,0 +1,40 @@
+"""Runs this service in a container (ECS Fargate) instead of as a Lambda.
+
+A small web server that turns each HTTP request into the event a Lambda Function URL
+would send, calls the same handler(), and writes its answer back. One request at a time,
+exactly like a Lambda, so the shared database connection needs no locking.
+"""
+
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlsplit
+
+from function import handler
+
+
+class Adapter(BaseHTTPRequestHandler):
+    def answer(self):
+        url = urlsplit(self.path)
+        length = int(self.headers.get("Content-Length") or 0)
+        event = {
+            "requestContext": {"http": {"method": self.command}},
+            "rawPath": url.path,
+            "rawQueryString": url.query,
+            "headers": dict(self.headers.items()),
+            "body": self.rfile.read(length).decode("utf-8", "replace") if length else None,
+            "isBase64Encoded": False,
+        }
+        response = handler(event, None)
+        body = response["body"].encode("utf-8")
+        self.send_response(response["statusCode"])
+        for name, value in response["headers"].items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = do_PATCH = do_DELETE = answer
+
+
+if __name__ == "__main__":  # pragma: no cover  (the container's entry point)
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), Adapter).serve_forever()

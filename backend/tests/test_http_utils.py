@@ -1,6 +1,9 @@
 """Unit tests for the shared HTTP helpers: responses, body parsing, validation, routing."""
 
+import datetime
+import decimal
 import json
+import uuid
 
 import pytest
 
@@ -9,12 +12,15 @@ from conftest import make_event
 from http_utils import (
     ApiError,
     clean_bool,
+    clean_choice,
     clean_email,
     clean_int,
     clean_text,
     clean_uuid,
     dispatch,
     json_body,
+    optional,
+    query_params,
     respond,
     respond_error,
     validate,
@@ -37,6 +43,18 @@ def test_respond_serialises_json_with_content_type():
 
 def test_respond_without_body_is_empty():
     assert respond(204) == {"statusCode": 204, "headers": {}, "body": ""}
+
+
+def test_respond_writes_times_as_iso_8601_and_other_values_as_text():
+    moment = datetime.datetime(2026, 11, 19, 9, 30, tzinfo=datetime.timezone.utc)
+    row_id = uuid.UUID("10000000-0000-4000-8000-00000000000a")
+    response = respond(200, {"at": moment, "day": moment.date(), "id": row_id, "amount": decimal.Decimal("2.50")})
+    assert body_of(response) == {
+        "at": "2026-11-19T09:30:00+00:00",
+        "day": "2026-11-19",
+        "id": "10000000-0000-4000-8000-00000000000a",
+        "amount": "2.50",
+    }
 
 
 def test_error_response_has_one_consistent_shape():
@@ -90,6 +108,24 @@ def test_json_body_rejects_invalid_base64_payload():
     with pytest.raises(ApiError) as error:
         json_body({"body": "%%%", "isBase64Encoded": True})
     assert error.value.status == 400
+
+
+# --- the query string ------------------------------------------------------------------
+
+
+def test_query_params_decodes_the_query_string():
+    event = make_event(query={"status": "OPEN", "q": "50% off & more", "empty": ""})
+    assert event["rawQueryString"] == "status=OPEN&q=50%25+off+%26+more&empty="
+    assert query_params(event) == {"status": "OPEN", "q": "50% off & more", "empty": ""}
+
+
+@pytest.mark.parametrize("event", [{}, {"rawQueryString": None}, {"rawQueryString": ""}, make_event()])
+def test_query_params_is_empty_without_a_query_string(event):
+    assert query_params(event) == {}
+
+
+def test_query_params_keeps_the_last_of_a_repeated_name():
+    assert query_params({"rawQueryString": "status=OPEN&status=CLOSED&q=caf%C3%A9"}) == {"status": "CLOSED", "q": "café"}
 
 
 # --- validation ------------------------------------------------------------------------
@@ -162,6 +198,33 @@ def test_clean_uuid_accepts_an_id(value):
 def test_clean_uuid_rejects_everything_else(value):
     with pytest.raises(ValueError, match="Manager is required"):
         clean_uuid("Manager")(value)
+
+
+@pytest.mark.parametrize("value", ["LOW", "HIGH"])
+def test_clean_choice_accepts_a_listed_value(value):
+    assert clean_choice("Priority", ("LOW", "HIGH"))(value) == value
+
+
+@pytest.mark.parametrize("value", [None, "", "low", "URGENT", " LOW", 1, True, ["LOW"], {"LOW": 1}])
+def test_clean_choice_rejects_everything_else(value):
+    with pytest.raises(ValueError, match="^Priority must be one of: LOW, HIGH$"):
+        clean_choice("Priority", ("LOW", "HIGH"))(value)
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", "\n\t"])
+def test_optional_turns_missing_null_and_blank_into_none(value):
+    assert optional(clean_text("Reason", 5))(value) is None
+
+
+def test_optional_runs_the_cleaner_on_anything_else():
+    assert optional(clean_text("Reason", 5))("  late ") == "late"
+    assert optional(clean_bool("Internal"))(False) is False
+    assert optional(clean_int("Level", 0, 9))(0) == 0
+    with pytest.raises(ValueError, match="Reason must be at most 5 characters"):
+        optional(clean_text("Reason", 5))("too long")
+    with pytest.raises(ValueError, match="Reason is required"):
+        optional(clean_text("Reason", 5))(7)
+    assert validate({}, {"reason": optional(clean_text("Reason", 5))}) == {"reason": None}
 
 
 def test_clean_email_normalises_case_and_whitespace():
